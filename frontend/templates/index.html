@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="YT_DOWNLOADER — A secure, fast, and private local YouTube video downloader." />
+  <title>YT_DOWNLOADER — Secure YouTube Downloader</title>
+
+  <!-- Preconnect for Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="/static/css/style.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23e63946'/><polygon points='12,8 26,16 12,24' fill='white'/></svg>" />
+</head>
+
+<body>
+<div class="app-layout">
+
+  <!-- ====================================================
+       SIDEBAR
+       ==================================================== -->
+  <aside class="sidebar" id="sidebar" role="navigation" aria-label="Main navigation">
+
+    <div class="sidebar-logo">
+      <div class="logo-mark">
+        <div class="logo-icon" aria-hidden="true">▶</div>
+        <div>
+          <div class="logo-text">YT_DOWNLOADER</div>
+          <div class="logo-sub">Fast · Simple · Private</div>
+        </div>
+      </div>
+    </div>
+
+    <nav class="sidebar-nav">
+      <a class="nav-item active" data-page="home" href="#" role="menuitem" aria-current="page" id="nav-home">
+        <span class="nav-icon" aria-hidden="true">🏠</span> Home
+      </a>
+      <a class="nav-item" data-page="downloads" href="#" role="menuitem" id="nav-downloads">
+        <span class="nav-icon" aria-hidden="true">⬇</span> Downloads
+      </a>
+      <a class="nav-item" data-page="settings" href="#" role="menuitem" id="nav-settings">
+        <span class="nav-icon" aria-hidden="true">⚙</span> Settings
+      </a>
+      <a class="nav-item" data-page="about" href="#" role="menuitem" id="nav-about">
+        <span class="nav-icon" aria-hidden="true">ℹ</span> About
+      </a>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="ffmpeg-status" id="ffmpegStatus">
+        <span class="status-dot" id="ffmpegDot"></span>
+        <span id="ffmpegLabel">Checking FFmpeg…</span>
+      </div>
+    </div>
+
+  </aside>
+
+  <!-- ====================================================
+       MAIN CONTENT
+       ==================================================== -->
+  <main class="main-content" id="mainContent" role="main">
+
+    <!-- ================================================
+         PAGE: HOME
+         ================================================ -->
+    <section class="page active" id="page-home" aria-label="Home">
+
+      <h1 class="page-title">Download your videos.</h1>
+      <p class="page-subtitle">Paste a YouTube URL, choose your quality, and download — privately.</p>
+
+      <!-- URL Input Card -->
+      <div class="card" style="margin-bottom: var(--space-lg);" id="urlCard">
+        <div class="card-title">Download YouTube Video</div>
+
+        <div class="url-input-group" role="search">
+          <label for="urlInput" class="hidden">YouTube URL</label>
+          <input
+            type="url"
+            id="urlInput"
+            class="url-input"
+            placeholder="https://www.youtube.com/watch?v=..."
+            aria-label="YouTube URL"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <button
+            class="btn btn-primary btn-analyze"
+            id="analyzeBtn"
+            aria-label="Analyze video"
+          >
+            <span id="analyzeBtnIcon">🔍</span>
+            <span id="analyzeBtnText">Analyze Video</span>
+          </button>
+        </div>
+
+        <!-- Error/status message -->
+        <div id="analyzeError" class="alert alert-error hidden" role="alert" aria-live="polite"></div>
+      </div>
+
+      <!-- Playlist detection prompt -->
+      <div class="card hidden" id="playlistCard" style="margin-bottom: var(--space-lg);">
+        <div class="card-title">🎵 Playlist Detected</div>
+        <p style="font-size:14px; color:var(--text-secondary); margin-bottom: var(--space-md);">
+          This URL contains a playlist. What would you like to download?
+        </p>
+        <div class="playlist-options">
+          <label class="radio-option">
+            <input type="radio" name="playlistChoice" value="single" checked id="radioSingle" />
+            <div>
+              <div style="font-size:14px; font-weight:600;">This video only</div>
+              <div style="font-size:12px; color:var(--text-muted);">Download only the currently selected video</div>
+            </div>
+          </label>
+          <label class="radio-option">
+            <input type="radio" name="playlistChoice" value="playlist" id="radioPlaylist" />
+            <div>
+              <div style="font-size:14px; font-weight:600; display:flex; align-items:center; gap:8px;">
+                Entire playlist
+                <span class="badge" id="playlistCount">0 videos</span>
+              </div>
+              <div style="font-size:12px; color:var(--text-muted);">Download all videos in the playlist</div>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      <!-- Analyzing skeleton -->
+      <div class="card hidden" id="skeletonCard" style="margin-bottom: var(--space-lg);" aria-label="Loading video information">
+        <div style="display:flex; gap:var(--space-lg); margin-bottom:var(--space-md);">
+          <div class="skeleton" style="width:160px; height:90px; border-radius:var(--radius-md); flex-shrink:0;"></div>
+          <div style="flex:1;">
+            <div class="skeleton skeleton-line full"></div>
+            <div class="skeleton skeleton-line medium"></div>
+            <div class="skeleton skeleton-line short"></div>
+          </div>
+        </div>
+        <div class="skeleton skeleton-line short" style="margin-bottom:var(--space-md);"></div>
+        <div style="display:grid; grid-template-columns: repeat(5,1fr); gap:8px;">
+          <div class="skeleton" style="height:64px; border-radius:12px;"></div>
+          <div class="skeleton" style="height:64px; border-radius:12px;"></div>
+          <div class="skeleton" style="height:64px; border-radius:12px;"></div>
+          <div class="skeleton" style="height:64px; border-radius:12px;"></div>
+          <div class="skeleton" style="height:64px; border-radius:12px;"></div>
+        </div>
+      </div>
+
+      <!-- Video Info + Quality picker -->
+      <div class="card hidden" id="videoCard" style="margin-bottom: var(--space-lg);">
+        <!-- Video info -->
+        <div class="video-info-card">
+          <div class="video-thumbnail-wrap">
+            <img id="videoThumbnail" src="" alt="Video thumbnail" loading="lazy" />
+          </div>
+          <div class="video-meta">
+            <div class="video-title" id="videoTitle"></div>
+            <div class="video-channel" id="videoChannel"></div>
+            <div class="video-badges">
+              <span class="badge" id="videoDuration">—</span>
+              <span class="badge" id="videoViews" style="display:none;"></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <!-- Quality picker -->
+        <div class="card-title" style="margin-bottom:var(--space-sm);">Select Quality</div>
+        <div class="quality-grid" id="qualityGrid" role="radiogroup" aria-label="Select download quality"></div>
+      </div>
+
+      <!-- Download button + directory -->
+      <div class="hidden" id="downloadSection">
+        <div class="card" style="margin-bottom: var(--space-md);">
+          <div class="card-title">Download Location</div>
+          <div style="display:flex; align-items:center; gap:var(--space-sm);">
+            <span style="font-size:13px; color:var(--text-secondary); flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" id="downloadDirDisplay">./downloads</span>
+            <button class="btn btn-ghost" id="changeDownloadDir" aria-label="Change download folder" style="font-size:12px;">📁 Change</button>
+          </div>
+          <div id="downloadDirError" class="alert alert-warning hidden" style="margin-top:var(--space-sm); margin-bottom:0;"></div>
+        </div>
+
+        <button class="btn btn-primary btn-lg" id="downloadBtn" aria-label="Start download">
+          <span id="downloadBtnIcon">⬇</span>
+          <span>Download Video</span>
+        </button>
+      </div>
+
+      <!-- Progress card -->
+      <div class="card hidden" id="progressCard" style="margin-top: var(--space-lg);" aria-live="polite" aria-label="Download progress">
+        <div class="card-title">Download Progress</div>
+
+        <div class="progress-stage" id="progressStage">
+          <span class="spinner"></span>
+          <span id="progressStageText">Preparing…</span>
+        </div>
+
+        <div class="progress-bar-wrap" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="progressBarWrap">
+          <div class="progress-bar-fill" id="progressBarFill" style="width:0%"></div>
+        </div>
+
+        <div class="progress-stats">
+          <span id="progressPct">0%</span>
+          <span id="progressSpeed"></span>
+          <span id="progressEta"></span>
+        </div>
+      </div>
+
+      <!-- Error during download -->
+      <div class="alert alert-error hidden" id="downloadError" style="margin-top: var(--space-md);" role="alert" aria-live="assertive"></div>
+
+      <!-- Completion card -->
+      <div class="card hidden" id="completeCard" style="margin-top: var(--space-lg);">
+        <div class="complete-card">
+          <div class="complete-icon">✅</div>
+          <div class="complete-title">Download Complete!</div>
+          <div class="complete-meta">
+            <div class="complete-meta-item"><span>📽</span> <strong id="completeTitle"></strong></div>
+            <div class="complete-meta-item"><span>⭐</span> Quality: <strong id="completeQuality"></strong></div>
+            <div class="complete-meta-item"><span>📦</span> Format: <strong id="completeFormat"></strong></div>
+            <div class="complete-meta-item"><span>📁</span> Location: <strong id="completeDir"></strong></div>
+          </div>
+          <div class="complete-actions">
+            <button class="btn btn-success" id="openFileBtn" aria-label="Open downloaded file">📂 Open File</button>
+            <button class="btn btn-secondary" id="openFolderBtn" aria-label="Open containing folder">🗂 Open Folder</button>
+            <button class="btn btn-ghost" id="downloadAnotherBtn" aria-label="Download another video">↩ Download Another</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Legal footer -->
+      <div class="legal-notice" style="margin-top: var(--space-2xl);">
+        🔒 Your downloads are processed locally. No download history is uploaded to third-party analytics services.<br />
+        ⚠ Use this application only for content you are authorized to download and in accordance with YouTube's terms and applicable copyright laws.
+      </div>
+
+    </section>
+
+    <!-- ================================================
+         PAGE: DOWNLOADS (History)
+         ================================================ -->
+    <section class="page" id="page-downloads" aria-label="Download history">
+      <h1 class="page-title">Downloads</h1>
+      <p class="page-subtitle">Your recent download history.</p>
+
+      <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: var(--space-md);">
+          <div class="card-title" style="margin:0;">History</div>
+          <button class="btn btn-ghost" id="refreshHistoryBtn" aria-label="Refresh history">🔄 Refresh</button>
+        </div>
+
+        <div id="historyEmpty" class="hidden" style="text-align:center; padding:var(--space-2xl); color:var(--text-muted); font-size:14px;">
+          <div style="font-size:48px; margin-bottom:var(--space-md);">📭</div>
+          No downloads yet. Go to Home to start downloading!
+        </div>
+
+        <div id="historyTableWrap" style="overflow-x:auto;">
+          <table class="history-table" id="historyTable" aria-label="Download history">
+            <thead>
+              <tr>
+                <th scope="col">Thumbnail</th>
+                <th scope="col">Title</th>
+                <th scope="col">Quality</th>
+                <th scope="col">Status</th>
+                <th scope="col">Date</th>
+                <th scope="col">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="historyBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================================================
+         PAGE: SETTINGS
+         ================================================ -->
+    <section class="page" id="page-settings" aria-label="Settings">
+      <h1 class="page-title">Settings</h1>
+      <p class="page-subtitle">Configure your download preferences.</p>
+
+      <div class="card">
+        <!-- Download Settings -->
+        <div class="settings-group">
+          <div class="settings-group-title">Download Settings</div>
+
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label">Default Download Directory</div>
+              <div class="setting-desc" id="settingsDirDisplay">./downloads</div>
+            </div>
+            <div class="setting-control">
+              <button class="btn btn-secondary" id="settingsChangeDirBtn" style="font-size:12px;">📁 Change Folder</button>
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label">Default Quality</div>
+              <div class="setting-desc">Pre-selected quality when a video is analyzed</div>
+            </div>
+            <div class="setting-control">
+              <select class="select-input" id="settingsQuality" aria-label="Default quality">
+                <option value="best">Best Available</option>
+                <option value="2160">4K (2160p)</option>
+                <option value="1440">2K (1440p)</option>
+                <option value="1080">Full HD (1080p)</option>
+                <option value="720">HD (720p)</option>
+                <option value="480">SD (480p)</option>
+                <option value="360">360p</option>
+                <option value="audio">Audio Only (MP3)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label">Max Concurrent Downloads</div>
+              <div class="setting-desc">Maximum number of simultaneous download jobs</div>
+            </div>
+            <div class="setting-control">
+              <select class="select-input" id="settingsMaxConcurrent" aria-label="Max concurrent downloads">
+                <option value="1">1</option>
+                <option value="2" selected>2</option>
+                <option value="3">3</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Appearance -->
+        <div class="settings-group">
+          <div class="settings-group-title">Appearance</div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label">Theme</div>
+              <div class="setting-desc">Toggle between dark and light mode</div>
+            </div>
+            <div class="setting-control">
+              <select class="select-input" id="settingsTheme" aria-label="Theme">
+                <option value="dark">Dark</option>
+                <option value="light">Light</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Danger zone -->
+        <div class="settings-group">
+          <div class="settings-group-title">Data</div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <div class="setting-label">Clear Download History</div>
+              <div class="setting-desc">Remove all entries from the download history</div>
+            </div>
+            <div class="setting-control">
+              <button class="btn btn-danger" id="clearHistoryBtn" style="font-size:12px;">🗑 Clear History</button>
+            </div>
+          </div>
+        </div>
+
+        <div style="text-align:right; margin-top: var(--space-md);">
+          <button class="btn btn-primary" id="saveSettingsBtn" aria-label="Save settings">💾 Save Settings</button>
+        </div>
+        <div id="settingsFeedback" class="alert hidden" style="margin-top: var(--space-md); margin-bottom:0;"></div>
+      </div>
+    </section>
+
+    <!-- ================================================
+         PAGE: ABOUT
+         ================================================ -->
+    <section class="page" id="page-about" aria-label="About">
+      <h1 class="page-title">About</h1>
+      <p class="page-subtitle">YT_DOWNLOADER — Secure local web interface.</p>
+
+      <div class="card">
+        <div class="about-hero">
+          <div class="about-logo-big" aria-hidden="true">▶</div>
+          <div class="about-app-name">YT_DOWNLOADER</div>
+          <div class="about-tagline">Fast. Simple. Private.</div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:var(--space-xl); padding: var(--space-md) 0;">
+          <div>
+            <div class="card-title">Tech Stack</div>
+            <ul style="list-style:none; font-size:13px; color:var(--text-secondary); display:flex; flex-direction:column; gap:6px;">
+              <li>🐍 Python + Flask</li>
+              <li>📥 yt-dlp (download engine)</li>
+              <li>🎬 FFmpeg (stream merging)</li>
+              <li>🌐 HTML / CSS / JavaScript</li>
+              <li>🔴 Server-Sent Events (live progress)</li>
+            </ul>
+          </div>
+          <div>
+            <div class="card-title">Features</div>
+            <ul style="list-style:none; font-size:13px; color:var(--text-secondary); display:flex; flex-direction:column; gap:6px;">
+              <li>✅ 4K / 2K / 1080p / 720p / 480p</li>
+              <li>✅ MP3 Audio Extraction</li>
+              <li>✅ Playlist Support</li>
+              <li>✅ Real-time Progress</li>
+              <li>✅ Download History</li>
+              <li>✅ Secure URL Validation</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div style="padding: var(--space-md) 0;">
+          <div class="card-title">Security</div>
+          <p style="font-size:13px; color:var(--text-secondary); line-height:1.7;">
+            This application validates all URLs against a YouTube domain whitelist before processing.
+            Filesystem paths are checked against allowed download directories to prevent path traversal.
+            No shell commands are executed with user input. Rate limiting protects against abuse.
+            All errors are logged server-side; no stack traces are shown to users.
+          </p>
+        </div>
+
+        <div class="legal-notice" style="margin-top: var(--space-md);">
+          ⚠ Use this application only for content you are authorized to download and in accordance with YouTube's terms and applicable copyright laws. This tool does not bypass DRM, authentication, or access restrictions.
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Mobile navigation -->
+  <nav class="mobile-nav" role="navigation" aria-label="Mobile navigation">
+    <button class="mobile-nav-item active" data-page="home" id="mnav-home" aria-label="Home">
+      <span class="m-icon">🏠</span> Home
+    </button>
+    <button class="mobile-nav-item" data-page="downloads" id="mnav-downloads" aria-label="Downloads">
+      <span class="m-icon">⬇</span> Downloads
+    </button>
+    <button class="mobile-nav-item" data-page="settings" id="mnav-settings" aria-label="Settings">
+      <span class="m-icon">⚙</span> Settings
+    </button>
+    <button class="mobile-nav-item" data-page="about" id="mnav-about" aria-label="About">
+      <span class="m-icon">ℹ</span> About
+    </button>
+  </nav>
+
+</div><!-- .app-layout -->
+
+<script src="/static/js/app.js"></script>
+</body>
+</html>

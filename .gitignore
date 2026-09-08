@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+.env
+venv/
+env/
+.venv/
+
+# Logs
+logs/
+*.log
+
+# App data & local configs
+settings.json
+downloads_history.json
+.last_download_dir
+
+# Downloads (keep folder structure, not user videos)
+downloads/*
+!downloads/.gitkeep
+
+# IDE & Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
