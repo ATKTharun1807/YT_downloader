@@ -279,12 +279,12 @@ def _build_base_opts(noplaylist: bool = True) -> dict:
         "buffersize": 1024 * 1024,     # 1MB buffer
         "extractor_args": {
             "youtube": {
-                "player_client": ["android", "ios", "mweb", "web"],
-                "player_skip": ["configs"],
+                "player_client": ["ios", "android", "mweb", "web"],
+                "player_skip": ["webpage", "configs"],
             }
         },
         "http_headers": {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
             "Accept-Language": "en-US,en;q=0.9",
         },
     }
@@ -315,9 +315,9 @@ def get_video_info(url: str, noplaylist: bool = True) -> dict:
     Raises MediaExtractionError on failure.
     """
     client_strategies = [
-        ["android", "ios", "mweb", "web"],
-        ["ios", "android"],
-        ["android"],
+        ["ios", "android", "mweb"],
+        ["android", "ios"],
+        ["mweb", "web"],
     ]
 
     raw = None
@@ -334,7 +334,7 @@ def get_video_info(url: str, noplaylist: bool = True) -> dict:
             "extractor_args": {
                 "youtube": {
                     "player_client": clients,
-                    "player_skip": ["configs"],
+                    "player_skip": ["webpage", "configs"],
                 }
             },
         }
