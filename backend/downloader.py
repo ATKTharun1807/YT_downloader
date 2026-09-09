@@ -43,12 +43,21 @@ def _safe_instagram_raise_no_formats(self, name='formats', expected=False, video
 
 InstagramIE.raise_no_formats = _safe_instagram_raise_no_formats
 
+def strip_ansi(text: str) -> str:
+    """Remove ANSI escape sequences like \x1b[0;31m."""
+    return re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', str(text)).strip()
+
+
 _orig_real_extract = InstagramIE._real_extract
 
 
 def _safe_instagram_real_extract(self, url):
     info_dict = _orig_real_extract(self, url)
-    if info_dict and not info_dict.get('formats') and info_dict.get('thumbnails'):
+    if not info_dict:
+        return info_dict
+
+    # Single photo post without video formats
+    if not info_dict.get('formats') and info_dict.get('thumbnails'):
         thumbs = info_dict['thumbnails']
         best = thumbs[-1]
         info_dict['url'] = best.get('url')
@@ -60,6 +69,23 @@ def _safe_instagram_real_extract(self, url):
             'width': best.get('width'),
             'height': best.get('height'),
         }]
+
+    # Carousel post with photo entries
+    if info_dict.get('entries'):
+        for entry in info_dict['entries']:
+            if entry and not entry.get('formats') and entry.get('thumbnails'):
+                thumbs = entry['thumbnails']
+                best = thumbs[-1]
+                entry['url'] = best.get('url')
+                entry['ext'] = 'jpg'
+                entry['formats'] = [{
+                    'url': best.get('url'),
+                    'ext': 'jpg',
+                    'format_id': '0',
+                    'width': best.get('width'),
+                    'height': best.get('height'),
+                }]
+
     return info_dict
 
 
@@ -73,15 +99,17 @@ InstagramIE._real_extract = _safe_instagram_real_extract
 class MediaExtractionError(Exception):
     """Structured exception with machine-readable error codes and user-friendly messages."""
     def __init__(self, message: str, code: str = "ERROR", details: Optional[dict] = None):
-        super().__init__(message)
-        self.message = message
+        clean_msg = strip_ansi(message)
+        super().__init__(clean_msg)
+        self.message = clean_msg
         self.code = code
         self.details = details or {}
 
 
 def categorize_extraction_error(e: Exception) -> MediaExtractionError:
-    """Classify exceptions into clear, actionable error codes and messages."""
-    msg = str(e).lower()
+    """Classify exceptions into clear, actionable error codes and clean messages."""
+    raw_str = strip_ansi(e)
+    msg = raw_str.lower()
     
     if "private" in msg or "only available for registered users" in msg or "who follow this account" in msg:
         return MediaExtractionError(
@@ -119,8 +147,19 @@ def categorize_extraction_error(e: Exception) -> MediaExtractionError:
             code="FFMPEG_REQUIRED"
         )
     
+    # Strip yt-dlp issue template fluff from user-facing error message
+    clean = raw_str
+    if "please report this issue on" in clean.lower():
+        clean = clean.split("; please report")[0]
+    if clean.startswith("ERROR: "):
+        clean = clean[7:]
+    if "[Instagram]" in clean:
+        clean = clean.split("[Instagram]")[-1].strip()
+    if clean.startswith(": "):
+        clean = clean[2:]
+        
     return MediaExtractionError(
-        f"Failed to fetch media information: {str(e)}",
+        clean or "Failed to fetch media information. Please check the URL.",
         code="ERROR"
     )
 
@@ -270,6 +309,8 @@ def get_video_info(url: str, noplaylist: bool = True) -> dict:
         "quiet": True,
         "no_warnings": True,
         "format": "all/best",
+        "socket_timeout": 10,
+        "retries": 2,
     }
 
     raw = None
