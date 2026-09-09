@@ -233,17 +233,8 @@
         <div class="carousel-grid" id="carouselGrid" role="group" aria-label="Carousel media items"></div>
       </div>
 
-      <!-- Download button + directory -->
-      <div class="hidden" id="downloadSection">
-        <div class="card" style="margin-bottom: var(--space-md);">
-          <div class="card-title">Download Location</div>
-          <div style="display:flex; align-items:center; gap:var(--space-sm);">
-            <span style="font-size:13px; color:var(--text-secondary); flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" id="downloadDirDisplay">./downloads</span>
-            <button class="btn btn-ghost" id="changeDownloadDir" aria-label="Change download folder" style="font-size:12px;">📁 Change</button>
-          </div>
-          <div id="downloadDirError" class="alert alert-warning hidden" style="margin-top:var(--space-sm); margin-bottom:0;"></div>
-        </div>
-
+      <!-- Download Action -->
+      <div class="hidden" id="downloadSection" style="margin-top: var(--space-lg);">
         <button class="btn btn-primary btn-lg" id="downloadBtn" aria-label="Start download">
           <span id="downloadBtnIcon">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">

@@ -72,9 +72,6 @@ const dom = {
 
   // Download Section
   downloadSection:   $('downloadSection'),
-  downloadDirDisplay:$('downloadDirDisplay'),
-  changeDownloadDir: $('changeDownloadDir'),
-  downloadDirError:  $('downloadDirError'),
   downloadBtn:       $('downloadBtn'),
   downloadBtnIcon:   $('downloadBtnIcon'),
   downloadBtnText:   $('downloadBtnText'),
@@ -273,7 +270,6 @@ function renderVideoInfo(data) {
 
   dom.videoCard.classList.remove('hidden');
   dom.downloadSection.classList.remove('hidden');
-  dom.downloadDirDisplay.textContent = state.settings.download_dir || './downloads';
 }
 
 function renderPlaylistInfo(data) {
@@ -294,7 +290,6 @@ function renderPlaylistInfo(data) {
   dom.downloadBtnText.textContent = 'Download Entire Playlist';
   dom.videoCard.classList.remove('hidden');
   dom.downloadSection.classList.remove('hidden');
-  dom.downloadDirDisplay.textContent = state.settings.download_dir || './downloads';
 }
 
 /* ============================================================
@@ -312,7 +307,6 @@ function renderCarouselInfo(data) {
 
   dom.carouselCard.classList.remove('hidden');
   dom.downloadSection.classList.remove('hidden');
-  dom.downloadDirDisplay.textContent = state.settings.download_dir || './downloads';
 }
 
 function buildCarouselGrid(items) {
@@ -468,6 +462,9 @@ function selectQuality(value) {
 /* ============================================================
    Download Handler
    ============================================================ */
+/* ============================================================
+   Download Handler
+   ============================================================ */
 dom.downloadBtn.addEventListener('click', handleDownload);
 
 async function handleDownload() {
@@ -478,7 +475,6 @@ async function handleDownload() {
   const quality = state.selectedQuality;
   const audioOnly = quality === 'audio';
   const noplaylist = state.noplaylist;
-  const downloadDir = state.settings.download_dir || '';
   const platform = state.videoInfo.platform || 'youtube';
   const mediaType = state.videoInfo.media_type || 'video';
 
@@ -500,8 +496,40 @@ async function handleDownload() {
   const channel = info.channel || info.uploader || '';
   const durationStr = info.duration_str || '';
 
+  // Remember original button state
+  const originalText = dom.downloadBtnText.textContent;
+  const originalIconHTML = dom.downloadBtnIcon.innerHTML;
+
+  // Step 1: Open native Windows folder picker
   dom.downloadBtn.disabled = true;
-  showProgress('preparing', 0, '', '');
+  dom.downloadBtnIcon.innerHTML = '<span class="spinner" style="width:16px;height:16px;border-width:2px;display:inline-block;"></span>';
+  dom.downloadBtnText.textContent = 'Selecting folder…';
+
+  let chosenDir = null;
+  try {
+    const pickerRes = await fetch('/api/select-folder');
+    const pickerData = await pickerRes.json();
+
+    if (pickerData.cancelled || !pickerData.success || !pickerData.directory) {
+      // User cancelled dialog gracefully: restore button without showing error
+      dom.downloadBtn.disabled = false;
+      dom.downloadBtnIcon.innerHTML = originalIconHTML;
+      dom.downloadBtnText.textContent = originalText;
+      return;
+    }
+
+    chosenDir = pickerData.directory;
+  } catch (err) {
+    dom.downloadBtn.disabled = false;
+    dom.downloadBtnIcon.innerHTML = originalIconHTML;
+    dom.downloadBtnText.textContent = originalText;
+    showDownloadError('Could not open Windows folder selector.');
+    return;
+  }
+
+  // Step 2: Start download automatically using the selected directory
+  dom.downloadBtnText.textContent = 'Starting download…';
+  showProgress('Preparing download…', 0, '', '');
 
   try {
     const res = await fetch('/api/download', {
@@ -512,7 +540,7 @@ async function handleDownload() {
         quality,
         audio_only: audioOnly,
         noplaylist,
-        download_dir: downloadDir,
+        download_dir: chosenDir,
         title,
         thumbnail,
         channel,
@@ -527,6 +555,8 @@ async function handleDownload() {
 
     if (!data.success) {
       dom.downloadBtn.disabled = false;
+      dom.downloadBtnIcon.innerHTML = originalIconHTML;
+      dom.downloadBtnText.textContent = originalText;
       hideProgress();
       showDownloadError(data.error || 'Failed to start download.');
       return;
@@ -538,13 +568,24 @@ async function handleDownload() {
       title,
       quality,
       audio_only: audioOnly,
-      directory: downloadDir,
+      directory: chosenDir,
     };
 
-    startSSE(data.job_id, { title, quality, audioOnly, channel, durationStr });
+    startSSE(data.job_id, {
+      title,
+      quality,
+      audioOnly,
+      channel,
+      durationStr,
+      directory: chosenDir,
+      originalText,
+      originalIconHTML,
+    });
 
   } catch (err) {
     dom.downloadBtn.disabled = false;
+    dom.downloadBtnIcon.innerHTML = originalIconHTML;
+    dom.downloadBtnText.textContent = originalText;
     hideProgress();
     showDownloadError('Network error. Please try again.');
   }
@@ -596,6 +637,13 @@ function handleProgressEvent(ev, meta) {
     if (state.sseSource) { state.sseSource.close(); state.sseSource = null; }
     hideProgress();
     dom.downloadBtn.disabled = false;
+    dom.downloadBtnIcon.innerHTML = meta.originalIconHTML || `
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+        <polyline points="7 10 12 15 17 10"></polyline>
+        <line x1="12" y1="15" x2="12" y2="3"></line>
+      </svg>`;
+    dom.downloadBtnText.textContent = meta.originalText || 'Download Media';
     showCompleteCard(ev, meta);
     return;
   }
@@ -604,6 +652,13 @@ function handleProgressEvent(ev, meta) {
     if (state.sseSource) { state.sseSource.close(); state.sseSource = null; }
     hideProgress();
     dom.downloadBtn.disabled = false;
+    dom.downloadBtnIcon.innerHTML = meta.originalIconHTML || `
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+        <polyline points="7 10 12 15 17 10"></polyline>
+        <line x1="12" y1="15" x2="12" y2="3"></line>
+      </svg>`;
+    dom.downloadBtnText.textContent = meta.originalText || 'Download Media';
     showDownloadError(ev.error || 'Download failed.');
     return;
   }
@@ -637,10 +692,14 @@ function hideProgress() {
    ============================================================ */
 function showCompleteCard(result, meta) {
   dom.completeCard.classList.remove('hidden');
+  const titleEl = dom.completeCard.querySelector('.complete-title');
+  if (titleEl) {
+    titleEl.textContent = 'Download completed successfully!';
+  }
   dom.completeTitle.textContent = meta.title || result.filename || 'Downloaded media';
   dom.completeQuality.textContent = meta.audioOnly ? 'MP3 Audio (192kbps)' : (meta.quality || 'Best Available');
   dom.completeFormat.textContent = (result.filename ? result.filename.split('.').pop() : (meta.audioOnly ? 'mp3' : 'mp4')).toUpperCase();
-  dom.completeDir.textContent = result.directory || state.settings.download_dir || './downloads';
+  dom.completeDir.textContent = result.directory || meta.directory || state.settings.download_dir || './downloads';
 
   const entryId = state.currentJobId;
 
@@ -665,16 +724,17 @@ function showCompleteCard(result, meta) {
 }
 
 /* ============================================================
-   Folder Picker (Native Dialog)
+   Folder Picker (Native Dialog for Settings)
    ============================================================ */
-dom.changeDownloadDir.addEventListener('click', () => openFolderPicker(dom.downloadDirDisplay, dom.downloadDirError));
-dom.settingsChangeDirBtn.addEventListener('click', () => openFolderPicker(dom.settingsDirDisplay, null));
+if (dom.settingsChangeDirBtn) {
+  dom.settingsChangeDirBtn.addEventListener('click', () => openFolderPicker(dom.settingsDirDisplay, null));
+}
 
 async function openFolderPicker(targetDisplay, targetError) {
   try {
     const res = await fetch('/api/select-folder');
     const data = await res.json();
-    if (data.success && data.directory) {
+    if (data.success && data.directory && !data.cancelled) {
       state.settings.download_dir = data.directory;
       if (targetDisplay) targetDisplay.textContent = data.directory;
       if (targetError) targetError.classList.add('hidden');
@@ -883,8 +943,5 @@ function escHtml(str) {
     const data = await res.json();
     state.settings = data.settings || {};
     applyTheme(state.settings.theme || 'light');
-    if (dom.downloadDirDisplay) {
-      dom.downloadDirDisplay.textContent = state.settings.download_dir || './downloads';
-    }
   } catch { /* ignore */ }
 })();

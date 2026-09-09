@@ -462,6 +462,80 @@ async def open_folder(entry_id: str):
 
 
 # ---------------------------------------------------------------------------
+# /api/select-folder  — Native Windows Folder Picker
+# ---------------------------------------------------------------------------
+
+def _run_native_folder_picker(initial_dir: str = "") -> str:
+    """
+    Open a native Windows directory selector dialog.
+    Must be called inside asyncio.to_thread to avoid blocking the main server loop.
+    Returns the selected folder path string, or "" if cancelled.
+    """
+    import tkinter as tk
+    from tkinter import filedialog
+
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+
+    if not initial_dir or not os.path.isdir(initial_dir):
+        initial_dir = os.path.join(os.path.expanduser("~"), "Downloads")
+        if not os.path.isdir(initial_dir):
+            initial_dir = os.path.expanduser("~")
+
+    try:
+        chosen = filedialog.askdirectory(
+            parent=root,
+            initialdir=initial_dir,
+            title="Select Download Destination Folder",
+            mustexist=True,
+        )
+    finally:
+        try:
+            root.destroy()
+        except Exception:
+            pass
+
+    return chosen or ""
+
+
+@router.get("/select-folder")
+async def select_folder():
+    """
+    Open a native Windows folder picker dialog and return the selected directory.
+    If the user cancels the dialog, returns cancelled=True without an error.
+    """
+    settings = _load_settings()
+    current_dir = settings.get("download_dir", "")
+
+    try:
+        chosen_dir = await asyncio.to_thread(_run_native_folder_picker, current_dir)
+    except Exception as e:
+        logger.error("Folder picker dialog failed: %s", e)
+        return _safe_error("Could not open Windows folder selector dialog.")
+
+    if not chosen_dir:
+        return {
+            "success": True,
+            "cancelled": True,
+            "directory": None,
+            "message": "Folder selection cancelled.",
+        }
+
+    norm_path = os.path.normpath(chosen_dir)
+    path_valid, resolved = validate_download_path(norm_path)
+    if not path_valid:
+        return _safe_error(f"Invalid or unwritable directory: {resolved}")
+
+    return {
+        "success": True,
+        "cancelled": False,
+        "directory": resolved,
+        "message": "Folder selected successfully.",
+    }
+
+
+# ---------------------------------------------------------------------------
 # /api/settings
 # ---------------------------------------------------------------------------
 
