@@ -1,10 +1,10 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="light">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="description" content="YT_DOWNLOADER — A secure, fast, and private local YouTube video downloader." />
-  <title>YT_DOWNLOADER — Secure YouTube Downloader</title>
+  <meta name="description" content="YT_DOWNLOADER — A secure, fast, and private local YouTube and Instagram media downloader." />
+  <title>YT_DOWNLOADER — Secure YouTube & Instagram Downloader</title>
 
   <!-- Preconnect for Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -12,7 +12,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
 
   <link rel="stylesheet" href="/static/css/style.css" />
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23e63946'/><polygon points='12,8 26,16 12,24' fill='white'/></svg>" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%237c3aed'/><polygon points='12,8 26,16 12,24' fill='white'/></svg>" />
 </head>
 
 <body>
@@ -25,7 +25,11 @@
 
     <div class="sidebar-logo">
       <div class="logo-mark">
-        <div class="logo-icon" aria-hidden="true">▶</div>
+        <div class="logo-icon" aria-hidden="true">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+          </svg>
+        </div>
         <div>
           <div class="logo-text">YT_DOWNLOADER</div>
           <div class="logo-sub">Fast · Simple · Private</div>
@@ -35,16 +39,38 @@
 
     <nav class="sidebar-nav">
       <a class="nav-item active" data-page="home" href="#" role="menuitem" aria-current="page" id="nav-home">
-        <span class="nav-icon" aria-hidden="true">🏠</span> Home
+        <span class="nav-icon" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+            <polyline points="9 22 9 12 15 12 15 22"></polyline>
+          </svg>
+        </span> Home
       </a>
       <a class="nav-item" data-page="downloads" href="#" role="menuitem" id="nav-downloads">
-        <span class="nav-icon" aria-hidden="true">⬇</span> Downloads
+        <span class="nav-icon" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" y1="15" x2="12" y2="3"></line>
+          </svg>
+        </span> Downloads
       </a>
       <a class="nav-item" data-page="settings" href="#" role="menuitem" id="nav-settings">
-        <span class="nav-icon" aria-hidden="true">⚙</span> Settings
+        <span class="nav-icon" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+        </span> Settings
       </a>
       <a class="nav-item" data-page="about" href="#" role="menuitem" id="nav-about">
-        <span class="nav-icon" aria-hidden="true">ℹ</span> About
+        <span class="nav-icon" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="16" x2="12" y2="12"></line>
+            <line x1="12" y1="8" x2="12.01" y2="8"></line>
+          </svg>
+        </span> About
       </a>
     </nav>
 
@@ -67,41 +93,56 @@
          ================================================ -->
     <section class="page active" id="page-home" aria-label="Home">
 
-      <h1 class="page-title">Download your videos.</h1>
-      <p class="page-subtitle">Paste a YouTube URL, choose your quality, and download — privately.</p>
+      <h1 class="page-title">Download your media.</h1>
+      <p class="page-subtitle">Paste a YouTube or Instagram URL, choose your options, and download — privately.</p>
 
       <!-- URL Input Card -->
       <div class="card" style="margin-bottom: var(--space-lg);" id="urlCard">
-        <div class="card-title">Download YouTube Video</div>
+        <div class="card-title" id="inputCardTitle">Download YouTube or Instagram Media</div>
 
         <div class="url-input-group" role="search">
-          <label for="urlInput" class="hidden">YouTube URL</label>
+          <label for="urlInput" class="hidden">Media URL</label>
           <input
             type="url"
             id="urlInput"
             class="url-input"
-            placeholder="https://www.youtube.com/watch?v=..."
-            aria-label="YouTube URL"
+            placeholder="https://www.youtube.com/watch?v=... or https://www.instagram.com/p/..."
+            aria-label="YouTube or Instagram URL"
             autocomplete="off"
             spellcheck="false"
           />
           <button
             class="btn btn-primary btn-analyze"
             id="analyzeBtn"
-            aria-label="Analyze video"
+            aria-label="Analyze URL"
           >
-            <span id="analyzeBtnIcon">🔍</span>
-            <span id="analyzeBtnText">Analyze Video</span>
+            <span id="analyzeBtnIcon">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="11" cy="11" r="8"></circle>
+                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+              </svg>
+            </span>
+            <span id="analyzeBtnText">Analyze URL</span>
           </button>
         </div>
 
-        <!-- Error/status message -->
-        <div id="analyzeError" class="alert alert-error hidden" role="alert" aria-live="polite"></div>
+        <!-- Structured Error Card with Retry Action -->
+        <div id="analyzeError" class="alert alert-error hidden" role="alert" aria-live="polite" style="margin-top: var(--space-md); display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="12" y1="8" x2="12" y2="12"></line>
+              <line x1="12" y1="16" x2="12.01" y2="16"></line>
+            </svg>
+            <span id="analyzeErrorText">Error message</span>
+          </div>
+          <button class="btn btn-ghost" id="retryAnalyzeBtn" style="font-size: 12px; padding: 4px 10px; height: auto;">Try Again</button>
+        </div>
       </div>
 
       <!-- Playlist detection prompt -->
       <div class="card hidden" id="playlistCard" style="margin-bottom: var(--space-lg);">
-        <div class="card-title">🎵 Playlist Detected</div>
+        <div class="card-title">🎵 YouTube Playlist Detected</div>
         <p style="font-size:14px; color:var(--text-secondary); margin-bottom: var(--space-md);">
           This URL contains a playlist. What would you like to download?
         </p>
@@ -127,7 +168,7 @@
       </div>
 
       <!-- Analyzing skeleton -->
-      <div class="card hidden" id="skeletonCard" style="margin-bottom: var(--space-lg);" aria-label="Loading video information">
+      <div class="card hidden" id="skeletonCard" style="margin-bottom: var(--space-lg);" aria-label="Loading media information">
         <div style="display:flex; gap:var(--space-lg); margin-bottom:var(--space-md);">
           <div class="skeleton" style="width:160px; height:90px; border-radius:var(--radius-md); flex-shrink:0;"></div>
           <div style="flex:1;">
@@ -146,12 +187,11 @@
         </div>
       </div>
 
-      <!-- Video Info + Quality picker -->
+      <!-- Single Video / Reel / Image Info + Quality picker -->
       <div class="card hidden" id="videoCard" style="margin-bottom: var(--space-lg);">
-        <!-- Video info -->
         <div class="video-info-card">
           <div class="video-thumbnail-wrap">
-            <img id="videoThumbnail" src="" alt="Video thumbnail" loading="lazy" />
+            <img id="videoThumbnail" src="" alt="Media thumbnail" loading="lazy" />
           </div>
           <div class="video-meta">
             <div class="video-title" id="videoTitle"></div>
@@ -166,8 +206,31 @@
         <div class="divider"></div>
 
         <!-- Quality picker -->
-        <div class="card-title" style="margin-bottom:var(--space-sm);">Select Quality</div>
+        <div class="card-title" style="margin-bottom:var(--space-sm);">Select Quality & Format</div>
         <div class="quality-grid" id="qualityGrid" role="radiogroup" aria-label="Select download quality"></div>
+      </div>
+
+      <!-- Instagram Carousel Selection Card -->
+      <div class="card hidden" id="carouselCard" style="margin-bottom: var(--space-lg);">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:var(--space-sm); margin-bottom:var(--space-md);">
+          <div>
+            <div class="card-title" style="margin:0; display:flex; align-items:center; gap:8px;">
+              <span>Instagram Carousel</span>
+              <span class="badge" id="carouselCount">0 items</span>
+            </div>
+            <div style="font-size:13px; color:var(--text-secondary); margin-top:2px;" id="carouselSubtitle">
+              Select the images and videos you want to download.
+            </div>
+          </div>
+          <div style="display:flex; gap:var(--space-xs); align-items:center;">
+            <button class="btn btn-ghost" id="carouselSelectAll" style="font-size:12px; padding:6px 12px;">Select All</button>
+            <button class="btn btn-ghost" id="carouselClearAll" style="font-size:12px; padding:6px 12px;">Clear All</button>
+            <span class="badge" id="carouselSelectedCount" style="margin-left:4px;">0 selected</span>
+          </div>
+        </div>
+
+        <!-- Carousel Grid -->
+        <div class="carousel-grid" id="carouselGrid" role="group" aria-label="Carousel media items"></div>
       </div>
 
       <!-- Download button + directory -->
@@ -182,8 +245,14 @@
         </div>
 
         <button class="btn btn-primary btn-lg" id="downloadBtn" aria-label="Start download">
-          <span id="downloadBtnIcon">⬇</span>
-          <span>Download Video</span>
+          <span id="downloadBtnIcon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="7 10 12 15 17 10"></polyline>
+              <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>
+          </span>
+          <span id="downloadBtnText">Download Media</span>
         </button>
       </div>
 
@@ -213,7 +282,12 @@
       <!-- Completion card -->
       <div class="card hidden" id="completeCard" style="margin-top: var(--space-lg);">
         <div class="complete-card">
-          <div class="complete-icon">✅</div>
+          <div class="complete-icon">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+              <polyline points="22 4 12 14.01 9 11.01"></polyline>
+            </svg>
+          </div>
           <div class="complete-title">Download Complete!</div>
           <div class="complete-meta">
             <div class="complete-meta-item"><span>📽</span> <strong id="completeTitle"></strong></div>
@@ -232,7 +306,7 @@
       <!-- Legal footer -->
       <div class="legal-notice" style="margin-top: var(--space-2xl);">
         🔒 Your downloads are processed locally. No download history is uploaded to third-party analytics services.<br />
-        ⚠ Use this application only for content you are authorized to download and in accordance with YouTube's terms and applicable copyright laws.
+        ⚠ Use this application only for content you are authorized to download and in accordance with platform terms and applicable copyright laws.
       </div>
 
     </section>
@@ -261,7 +335,7 @@
               <tr>
                 <th scope="col">Thumbnail</th>
                 <th scope="col">Title</th>
-                <th scope="col">Quality</th>
+                <th scope="col">Format</th>
                 <th scope="col">Status</th>
                 <th scope="col">Date</th>
                 <th scope="col">Actions</th>
@@ -335,12 +409,12 @@
           <div class="setting-row">
             <div class="setting-info">
               <div class="setting-label">Theme</div>
-              <div class="setting-desc">Toggle between dark and light mode</div>
+              <div class="setting-desc">Toggle between light and dark mode</div>
             </div>
             <div class="setting-control">
               <select class="select-input" id="settingsTheme" aria-label="Theme">
+                <option value="light" selected>Light</option>
                 <option value="dark">Dark</option>
-                <option value="light">Light</option>
               </select>
             </div>
           </div>
@@ -376,7 +450,11 @@
 
       <div class="card">
         <div class="about-hero">
-          <div class="about-logo-big" aria-hidden="true">▶</div>
+          <div class="about-logo-big" aria-hidden="true">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="5 3 19 12 5 21 5 3"></polygon>
+            </svg>
+          </div>
           <div class="about-app-name">YT_DOWNLOADER</div>
           <div class="about-tagline">Fast. Simple. Private.</div>
         </div>
@@ -385,24 +463,24 @@
 
         <div style="display:grid; grid-template-columns:1fr 1fr; gap:var(--space-xl); padding: var(--space-md) 0;">
           <div>
-            <div class="card-title">Tech Stack</div>
+            <div class="card-title">Supported Platforms</div>
             <ul style="list-style:none; font-size:13px; color:var(--text-secondary); display:flex; flex-direction:column; gap:6px;">
-              <li>🐍 Python + Flask</li>
-              <li>📥 yt-dlp (download engine)</li>
-              <li>🎬 FFmpeg (stream merging)</li>
-              <li>🌐 HTML / CSS / JavaScript</li>
-              <li>🔴 Server-Sent Events (live progress)</li>
+              <li>📺 YouTube Videos & Shorts</li>
+              <li>🎵 YouTube Playlists & MP3 Audio</li>
+              <li>📸 Instagram Single Image Posts</li>
+              <li>🎬 Instagram Reels & Video Posts</li>
+              <li>🖼 Instagram Multi-Item Carousels (ZIP)</li>
             </ul>
           </div>
           <div>
-            <div class="card-title">Features</div>
+            <div class="card-title">Key Features</div>
             <ul style="list-style:none; font-size:13px; color:var(--text-secondary); display:flex; flex-direction:column; gap:6px;">
-              <li>✅ 4K / 2K / 1080p / 720p / 480p</li>
-              <li>✅ MP3 Audio Extraction</li>
-              <li>✅ Playlist Support</li>
-              <li>✅ Real-time Progress</li>
-              <li>✅ Download History</li>
-              <li>✅ Secure URL Validation</li>
+              <li>✅ 4K / 2K / 1080p / 720p / MP4</li>
+              <li>✅ MP3 Audio Extraction (192kbps)</li>
+              <li>✅ Interactive Carousel Selection</li>
+              <li>✅ Real-time SSE Progress</li>
+              <li>✅ Local Download History</li>
+              <li>✅ Native Windows Folder Picker</li>
             </ul>
           </div>
         </div>
@@ -410,17 +488,16 @@
         <div class="divider"></div>
 
         <div style="padding: var(--space-md) 0;">
-          <div class="card-title">Security</div>
+          <div class="card-title">Security & Privacy</div>
           <p style="font-size:13px; color:var(--text-secondary); line-height:1.7;">
-            This application validates all URLs against a YouTube domain whitelist before processing.
-            Filesystem paths are checked against allowed download directories to prevent path traversal.
-            No shell commands are executed with user input. Rate limiting protects against abuse.
-            All errors are logged server-side; no stack traces are shown to users.
+            This application validates all URLs against YouTube and Instagram security rules before processing.
+            Filesystem paths are checked against allowed local download directories to prevent path traversal.
+            All downloads and conversions are performed locally on your machine.
           </p>
         </div>
 
         <div class="legal-notice" style="margin-top: var(--space-md);">
-          ⚠ Use this application only for content you are authorized to download and in accordance with YouTube's terms and applicable copyright laws. This tool does not bypass DRM, authentication, or access restrictions.
+          ⚠ Use this application only for content you are authorized to download and in accordance with platform terms and applicable copyright laws.
         </div>
       </div>
     </section>

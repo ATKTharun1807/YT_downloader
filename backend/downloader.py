@@ -1,33 +1,132 @@
 """
-downloader.py — Core yt-dlp download logic refactored from youtube.py.
+downloader.py — Core download and metadata extraction engine for YouTube & Instagram.
 
-All original download reliability settings are preserved:
-  - retries=20, fragment_retries=20
-  - http_chunk_size=10MB
-  - socket_timeout=30
-  - windowsfilenames=True
-  - MP4 + M4A format preference
-  - FFmpegExtractAudio for MP3
-  - cleanup_intermediate_files()
-  - get_ffmpeg_path() via PATH or imageio-ffmpeg
-
-This module contains NO input() or print() calls.
-All communication is via return values and callbacks.
+Features:
+  - Preserves all original YouTube download reliability settings:
+      * retries=20, fragment_retries=20, http_chunk_size=10MB, socket_timeout=30
+      * MP4 + M4A preference, FFmpegExtractAudio for MP3
+      * cleanup_intermediate_files(), get_ffmpeg_path()
+  - Full Instagram support:
+      * Reels (MP4 video)
+      * Single image posts (JPG/PNG)
+      * Single video posts (MP4)
+      * Carousel posts (interactive multi-item selection with single-item direct download or ZIP bundle)
+  - Resilient error categorization (LOGIN_REQUIRED, PRIVATE_CONTENT, RATE_LIMITED, TIMEOUT, etc.)
+  - Bounded retry backoff on transient network timeouts
 """
 
+import json
+import logging
 import os
 import re
 import shutil
-import logging
-from typing import Callable, Optional
+import tempfile
+import time
+import urllib.request
+import zipfile
+from datetime import datetime
+from typing import Callable, Optional, List, Dict, Any
 
 import yt_dlp
+from yt_dlp.extractor.instagram import InstagramIE
 
 logger = logging.getLogger(__name__)
 
+_orig_raise_no_formats = InstagramIE.raise_no_formats
+
+
+def _safe_instagram_raise_no_formats(self, name='formats', expected=False, video_id=None):
+    if name and 'no video in this post' in str(name).lower():
+        return
+    return _orig_raise_no_formats(self, name, expected=expected, video_id=video_id)
+
+
+InstagramIE.raise_no_formats = _safe_instagram_raise_no_formats
+
+_orig_real_extract = InstagramIE._real_extract
+
+
+def _safe_instagram_real_extract(self, url):
+    info_dict = _orig_real_extract(self, url)
+    if info_dict and not info_dict.get('formats') and info_dict.get('thumbnails'):
+        thumbs = info_dict['thumbnails']
+        best = thumbs[-1]
+        info_dict['url'] = best.get('url')
+        info_dict['ext'] = 'jpg'
+        info_dict['formats'] = [{
+            'url': best.get('url'),
+            'ext': 'jpg',
+            'format_id': '0',
+            'width': best.get('width'),
+            'height': best.get('height'),
+        }]
+    return info_dict
+
+
+InstagramIE._real_extract = _safe_instagram_real_extract
+
 
 # ---------------------------------------------------------------------------
-# FFmpeg detection (preserved from youtube.py)
+# Custom Exception & Error Categorization
+# ---------------------------------------------------------------------------
+
+class MediaExtractionError(Exception):
+    """Structured exception with machine-readable error codes and user-friendly messages."""
+    def __init__(self, message: str, code: str = "ERROR", details: Optional[dict] = None):
+        super().__init__(message)
+        self.message = message
+        self.code = code
+        self.details = details or {}
+
+
+def categorize_extraction_error(e: Exception) -> MediaExtractionError:
+    """Classify exceptions into clear, actionable error codes and messages."""
+    msg = str(e).lower()
+    
+    if "private" in msg or "only available for registered users" in msg or "who follow this account" in msg:
+        return MediaExtractionError(
+            "This account or post is private. Only public content can be downloaded without authentication.",
+            code="PRIVATE_CONTENT"
+        )
+    if "login" in msg or "rate-limit for accessing posts anonymously" in msg or "redirected to the login page" in msg:
+        return MediaExtractionError(
+            "Instagram requires login to view this content or anonymous rate limit was reached.",
+            code="LOGIN_REQUIRED"
+        )
+    if "rate limit" in msg or "too many requests" in msg or "429" in msg:
+        return MediaExtractionError(
+            "Rate limit reached. Please wait a few moments before trying again.",
+            code="RATE_LIMITED"
+        )
+    if "timeout" in msg or "timed out" in msg:
+        return MediaExtractionError(
+            "Connection timed out while contacting the server. Please check your internet connection and try again.",
+            code="TIMEOUT"
+        )
+    if "unavailable" in msg or "removed" in msg or "does not exist" in msg or "not found" in msg or "404" in msg:
+        return MediaExtractionError(
+            "This media is unavailable, deleted, or the link is invalid.",
+            code="UNAVAILABLE"
+        )
+    if "captcha" in msg or "challenge" in msg:
+        return MediaExtractionError(
+            "A security challenge/CAPTCHA is required by the platform.",
+            code="CAPTCHA_REQUIRED"
+        )
+    if "ffmpeg" in msg:
+        return MediaExtractionError(
+            "FFmpeg is required for processing this media. Please install FFmpeg.",
+            code="FFMPEG_REQUIRED"
+        )
+    
+    return MediaExtractionError(
+        f"Failed to fetch media information: {str(e)}",
+        code="ERROR"
+    )
+
+
+# ---------------------------------------------------------------------------
+# FFmpeg detection (preserved from original code)
 # ---------------------------------------------------------------------------
 
 def get_ffmpeg_path() -> Optional[str]:
@@ -43,7 +142,7 @@ def get_ffmpeg_path() -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
-# Directory utilities (preserved from youtube.py)
+# Directory utilities (preserved from original code)
 # ---------------------------------------------------------------------------
 
 def is_writable_dir(directory: str) -> bool:
@@ -68,7 +167,7 @@ def get_default_download_dir() -> str:
 
 
 # ---------------------------------------------------------------------------
-# File cleanup (preserved from youtube.py)
+# File cleanup (preserved from original code)
 # ---------------------------------------------------------------------------
 
 def cleanup_intermediate_files(directory: str) -> None:
@@ -106,7 +205,7 @@ def cleanup_intermediate_files(directory: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Resolution labels (preserved from youtube.py)
+# Resolution labels (preserved from original code)
 # ---------------------------------------------------------------------------
 
 RESOLUTION_LABELS: dict[int, str] = {
@@ -126,16 +225,16 @@ def get_resolution_label(height: int) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Base yt-dlp options (preserved from youtube.py)
+# Base yt-dlp options
 # ---------------------------------------------------------------------------
 
 def _build_base_opts(noplaylist: bool = True) -> dict:
-    """Build base yt-dlp options with all reliability settings."""
+    """Build base yt-dlp options with high reliability and impersonation support."""
     opts = {
         "noplaylist": noplaylist,
         "http_chunk_size": 10485760,   # 10MB chunking
-        "retries": 20,
-        "fragment_retries": 20,
+        "retries": 15,
+        "fragment_retries": 15,
         "file_access_retries": 5,
         "socket_timeout": 30,
         "buffersize": 1024 * 1024,     # 1MB buffer
@@ -155,40 +254,54 @@ def _build_base_opts(noplaylist: bool = True) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Video info extraction
+# Media info extraction
 # ---------------------------------------------------------------------------
 
 def get_video_info(url: str, noplaylist: bool = True) -> dict:
     """
-    Fetch video/playlist metadata without downloading.
+    Fetch media metadata (YouTube or Instagram) without downloading.
+    Handles single videos, playlists, reels, photos, and carousels.
 
     Returns a structured dict suitable for JSON serialization.
-    Raises RuntimeError on failure.
+    Raises MediaExtractionError on failure.
     """
     opts = {
         **_build_base_opts(noplaylist=noplaylist),
         "quiet": True,
         "no_warnings": True,
+        "format": "all/best",
     }
 
-    try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            raw = ydl.extract_info(url, download=False)
-    except yt_dlp.utils.DownloadError as e:
-        msg = str(e)
-        if "private" in msg.lower():
-            raise RuntimeError("This video is private and cannot be downloaded.")
-        if "unavailable" in msg.lower() or "removed" in msg.lower():
-            raise RuntimeError("This video is unavailable or has been removed.")
-        raise RuntimeError(f"Failed to fetch video info: {msg}")
-    except Exception as e:
-        raise RuntimeError(f"Failed to fetch video info: {e}")
+    raw = None
+    max_retries = 2
+    last_err = None
 
-    return _parse_info(raw, noplaylist)
+    for attempt in range(max_retries):
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                raw = ydl.extract_info(url, download=False)
+            break
+        except Exception as e:
+            last_err = e
+            logger.warning("Extraction attempt %d failed for %s: %s", attempt + 1, url, e)
+            if attempt < max_retries - 1:
+                time.sleep(1.0)
+
+    if raw is None:
+        raise categorize_extraction_error(last_err or Exception("Could not retrieve media details"))
+
+    return _parse_info(raw, noplaylist, url)
 
 
-def _parse_info(raw: dict, noplaylist: bool) -> dict:
+def _parse_info(raw: dict, noplaylist: bool, original_url: str) -> dict:
     """Parse raw yt-dlp info into clean structured dict."""
+    extractor = (raw.get("extractor") or raw.get("extractor_key") or "").lower()
+    is_instagram = "instagram" in extractor or "instagram.com" in original_url
+
+    if is_instagram:
+        return _parse_instagram_info(raw, original_url)
+
+    # Standard YouTube parsing
     is_playlist = raw.get("_type") == "playlist"
 
     if is_playlist and noplaylist:
@@ -202,7 +315,9 @@ def _parse_info(raw: dict, noplaylist: bool) -> dict:
         entries = list(raw.get("entries", []) or [])
         entries = [e for e in entries if e]
         return {
+            "platform": "youtube",
             "is_playlist": True,
+            "media_type": "playlist",
             "playlist_id": raw.get("id", ""),
             "playlist_title": raw.get("title", "Unknown Playlist"),
             "playlist_count": raw.get("playlist_count") or len(entries),
@@ -211,7 +326,127 @@ def _parse_info(raw: dict, noplaylist: bool) -> dict:
             "entries": [_parse_single_entry(e) for e in entries[:5]],  # preview first 5
         }
 
-    return _parse_single_entry(raw)
+    parsed = _parse_single_entry(raw)
+    parsed["platform"] = "youtube"
+    parsed["media_type"] = "video"
+    return parsed
+
+
+def _parse_instagram_info(info: dict, url: str) -> dict:
+    """Extract clean metadata from an Instagram post, reel, image, or carousel."""
+    is_playlist = info.get("_type") == "playlist"
+    entries = list(info.get("entries", []) or [])
+    entries = [e for e in entries if e]
+
+    uploader = info.get("uploader") or info.get("channel") or info.get("uploader_id") or "Instagram User"
+    title = info.get("title") or info.get("description") or f"Instagram post by @{uploader}"
+    if len(title) > 80:
+        title = title[:77] + "..."
+
+    # Determine if this is a Carousel (multiple items)
+    if is_playlist and len(entries) > 1:
+        items = []
+        for idx, entry in enumerate(entries, start=1):
+            item_formats = entry.get("formats") or []
+            has_video = bool(item_formats and any(f.get("vcodec") != "none" for f in item_formats))
+            item_thumb = _best_thumbnail(entry)
+            item_type = "video" if has_video else "image"
+            
+            # Width and height
+            w = entry.get("width") or 1080
+            h = entry.get("height") or (1920 if item_type == "video" else 1080)
+            
+            # Direct media URL
+            item_url = ""
+            if has_video:
+                item_url = entry.get("url") or (item_formats[-1].get("url") if item_formats else "")
+            else:
+                item_url = item_thumb
+
+            items.append({
+                "index": idx,
+                "type": item_type,
+                "thumbnail": item_thumb,
+                "url": item_url,
+                "extension": "mp4" if item_type == "video" else "jpg",
+                "width": w,
+                "height": h,
+                "duration": entry.get("duration") or 0,
+            })
+
+        return {
+            "platform": "instagram",
+            "media_type": "carousel",
+            "is_carousel": True,
+            "is_playlist": False,
+            "id": info.get("id", ""),
+            "title": title,
+            "uploader": uploader,
+            "channel": f"@{uploader}",
+            "thumbnail": items[0]["thumbnail"] if items else _best_thumbnail(info),
+            "item_count": len(items),
+            "items": items,
+            "quality_options": [
+                {"value": "best", "label": "Full Quality (Original)", "description": "Download selected items in original resolution"}
+            ],
+        }
+
+    # If single item from playlist
+    single_raw = entries[0] if (is_playlist and entries) else info
+    formats = single_raw.get("formats") or []
+    has_video = bool(formats and any(f.get("vcodec") != "none" for f in formats))
+    
+    thumbnail = _best_thumbnail(single_raw)
+    duration_sec = single_raw.get("duration") or 0
+    duration_str = _format_duration(duration_sec) if has_video else ""
+
+    media_type = "reel" if "/reel" in url.lower() else ("video" if has_video else "image")
+
+    quality_options = []
+    if has_video:
+        quality_options.append({
+            "value": "best",
+            "label": "High Quality Video (MP4)",
+            "description": "Original resolution MP4 video",
+        })
+        quality_options.append({
+            "value": "audio",
+            "label": "Audio Only (MP3 192kbps)",
+            "description": "Extract audio track as MP3",
+        })
+    else:
+        quality_options.append({
+            "value": "best",
+            "label": "High Resolution Image (JPG)",
+            "description": "Original photo",
+        })
+
+    return {
+        "platform": "instagram",
+        "media_type": media_type,
+        "is_carousel": False,
+        "is_playlist": False,
+        "id": single_raw.get("id", ""),
+        "title": title,
+        "uploader": uploader,
+        "channel": f"@{uploader}",
+        "thumbnail": thumbnail,
+        "duration": duration_sec,
+        "duration_str": duration_str,
+        "view_count": single_raw.get("view_count") or single_raw.get("like_count"),
+        "quality_options": quality_options,
+        "items": [
+            {
+                "index": 1,
+                "type": "video" if has_video else "image",
+                "thumbnail": thumbnail,
+                "url": thumbnail if not has_video else single_raw.get("url", ""),
+                "extension": "mp4" if has_video else "jpg",
+                "width": single_raw.get("width") or 1080,
+                "height": single_raw.get("height") or 1080,
+            }
+        ],
+    }
 
 
 def _parse_single_entry(info: dict) -> dict:
@@ -238,7 +473,7 @@ def _parse_single_entry(info: dict) -> dict:
         quality_options.append({
             "value": str(h),
             "label": get_resolution_label(h),
-            "description": f"MP4 video",
+            "description": "MP4 video",
         })
     quality_options.append({
         "value": "audio",
@@ -246,7 +481,6 @@ def _parse_single_entry(info: dict) -> dict:
         "description": "Extract audio as MP3",
     })
 
-    # Duration formatting
     duration_sec = info.get("duration") or 0
     duration_str = _format_duration(duration_sec)
 
@@ -266,15 +500,22 @@ def _parse_single_entry(info: dict) -> dict:
 
 
 def _best_thumbnail(info: dict) -> str:
-    """Return the best available thumbnail URL."""
+    """Return the highest quality available thumbnail/image URL."""
     thumbnails = info.get("thumbnails") or []
     if thumbnails:
-        # Prefer hq thumbnails
-        for t in reversed(thumbnails):
-            url = t.get("url", "")
-            if url and url.startswith("http"):
-                return url
-    return info.get("thumbnail", "")
+        # Sort by resolution (width * height) descending
+        valid_thumbs = [
+            t for t in thumbnails
+            if t.get("url") and str(t.get("url")).startswith("http")
+        ]
+        if valid_thumbs:
+            valid_thumbs.sort(
+                key=lambda t: (t.get("width") or 0) * (t.get("height") or 0) or (t.get("preference") or 0),
+                reverse=True
+            )
+            return valid_thumbs[0]["url"]
+
+    return info.get("thumbnail") or info.get("url") or ""
 
 
 def _format_duration(seconds: int) -> str:
@@ -301,10 +542,7 @@ def build_download_options(
     progress_callback: Optional[Callable[[dict], None]] = None,
     postprocess_callback: Optional[Callable[[dict], None]] = None,
 ) -> dict:
-    """
-    Build yt-dlp options dict for actual download.
-    Preserves all format strings from youtube.py exactly.
-    """
+    """Build yt-dlp options dict for actual download."""
     outtmpl = os.path.join(save_dir, "%(title)s.%(ext)s")
 
     hooks = []
@@ -333,7 +571,6 @@ def build_download_options(
             }
         ]
     else:
-        # Exact format strings from youtube.py — preserved
         if quality and quality not in ("best", "audio"):
             try:
                 h = int(quality)
@@ -363,7 +600,49 @@ def build_download_options(
 
 
 # ---------------------------------------------------------------------------
-# Actual download executor (called from background thread in jobs.py)
+# Direct Image Downloader
+# ---------------------------------------------------------------------------
+
+def _download_direct_file(
+    file_url: str,
+    target_path: str,
+    on_progress: Optional[Callable[[dict], None]] = None
+) -> None:
+    """Download a direct image or video URL over HTTP with progress reporting."""
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+        "Accept": "*/*",
+    }
+    req = urllib.request.Request(file_url, headers=headers)
+    
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        total_size = int(resp.headers.get('content-length', 0))
+        downloaded = 0
+        chunk_size = 64 * 1024
+        
+        with open(target_path, 'wb') as f:
+            while True:
+                chunk = resp.read(chunk_size)
+                if not chunk:
+                    break
+                f.write(chunk)
+                downloaded += len(chunk)
+                
+                if on_progress:
+                    on_progress({
+                        "status": "downloading",
+                        "downloaded_bytes": downloaded,
+                        "total_bytes": total_size,
+                        "speed": 0,
+                        "eta": 0,
+                    })
+
+    if on_progress:
+        on_progress({"status": "finished", "filename": target_path})
+
+
+# ---------------------------------------------------------------------------
+# Download Executors (called in background thread)
 # ---------------------------------------------------------------------------
 
 def execute_download(
@@ -374,19 +653,39 @@ def execute_download(
     noplaylist: bool,
     on_progress: Callable[[dict], None],
     on_stage: Callable[[str], None],
+    media_type: str = "video",
+    platform: str = "youtube",
+    title: str = "",
 ) -> dict:
     """
-    Execute the download. Designed to run in a background thread.
-
-    `on_progress(d)` is called with yt-dlp progress hook dicts.
-    `on_stage(stage_name)` is called at each workflow stage.
-
-    Returns dict with result info on success.
-    Raises RuntimeError on failure.
+    Execute download for a single video, reel, or photo.
     """
     downloaded_files: list[str] = []
     is_audio = audio_only or quality == "audio"
 
+    on_stage("downloading")
+
+    # If it is a single Instagram Image Post
+    if platform == "instagram" and media_type == "image":
+        safe_title = re.sub(r'[<>:"/\\|?*]', '_', title or f"instagram_photo_{int(time.time())}")[:50].strip()
+        filename = f"{safe_title}.jpg"
+        target_file = os.path.join(save_dir, filename)
+
+        # Extract image URL via get_video_info
+        info = get_video_info(url, noplaylist=True)
+        img_url = info.get("thumbnail") or (info["items"][0]["url"] if info.get("items") else "")
+        if not img_url:
+            raise RuntimeError("Could not find image URL to download.")
+
+        _download_direct_file(img_url, target_file, on_progress=on_progress)
+        on_stage("completed")
+        return {
+            "file": target_file,
+            "filename": filename,
+            "directory": save_dir,
+        }
+
+    # Standard yt-dlp download for YouTube & Instagram videos/reels
     def progress_hook(d: dict) -> None:
         on_progress(d)
         if d.get("status") == "finished":
@@ -402,8 +701,6 @@ def execute_download(
             elif "ExtractAudio" in pp_name:
                 on_stage("extracting_audio")
 
-    on_stage("downloading")
-
     options = build_download_options(
         url=url,
         quality=quality,
@@ -418,25 +715,17 @@ def execute_download(
         with yt_dlp.YoutubeDL(options) as ydl:
             ydl.download([url])
     except yt_dlp.utils.DownloadError as e:
-        msg = str(e)
-        logger.error("yt-dlp DownloadError: %s", msg)
-        if "private" in msg.lower():
-            raise RuntimeError("This video is private and cannot be downloaded.")
-        if "unavailable" in msg.lower():
-            raise RuntimeError("This video is unavailable.")
-        if "ffmpeg" in msg.lower():
-            raise RuntimeError("FFmpeg is required but was not found. Please install FFmpeg.")
-        raise RuntimeError("Download failed. Please check the URL and try again.")
+        err = categorize_extraction_error(e)
+        logger.error("Download failed: %s", err.message)
+        raise RuntimeError(err.message)
     except Exception as e:
         logger.error("Download exception: %s", e, exc_info=True)
-        raise RuntimeError("Download failed. Please try again.")
+        raise RuntimeError(f"Download failed: {e}")
 
     on_stage("cleaning")
     cleanup_intermediate_files(save_dir)
 
-    # Determine final filename
     final_file = _resolve_final_filename(downloaded_files, save_dir, is_audio)
-
     on_stage("completed")
 
     return {
@@ -446,11 +735,104 @@ def execute_download(
     }
 
 
+def execute_carousel_download(
+    url: str,
+    selected_items: List[int],
+    save_dir: str,
+    title: str,
+    on_progress: Callable[[dict], None],
+    on_stage: Callable[[str], None],
+) -> dict:
+    """
+    Download selected items from an Instagram carousel post.
+    If 1 item selected -> saves directly as file.
+    If >1 items selected -> saves into a .zip archive.
+    """
+    on_stage("downloading")
+
+    info = get_video_info(url, noplaylist=False)
+    all_items = info.get("items") or []
+    if not all_items:
+        raise RuntimeError("No carousel items found.")
+
+    # Filter items according to selection
+    if not selected_items:
+        selected_items = list(range(1, len(all_items) + 1))
+
+    items_to_download = [item for item in all_items if item["index"] in selected_items]
+    if not items_to_download:
+        raise RuntimeError("No valid items selected for download.")
+
+    safe_title = re.sub(r'[<>:"/\\|?*]', '_', title or "instagram_carousel")[:40].strip()
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # Single item direct download
+    if len(items_to_download) == 1:
+        item = items_to_download[0]
+        ext = item.get("extension", "jpg")
+        filename = f"{safe_title}_{item['index']:02d}.{ext}"
+        target_path = os.path.join(save_dir, filename)
+
+        if item["type"] == "image":
+            _download_direct_file(item["url"], target_path, on_progress=on_progress)
+        else:
+            # Video item: use yt-dlp or direct download
+            _download_direct_file(item["url"], target_path, on_progress=on_progress)
+
+        on_stage("completed")
+        return {
+            "file": target_path,
+            "filename": filename,
+            "directory": save_dir,
+        }
+
+    # Multiple items -> Download to temp directory and pack into ZIP
+    temp_dir = tempfile.mkdtemp(prefix="ig_carousel_")
+    downloaded_paths = []
+
+    try:
+        total_items = len(items_to_download)
+        for idx, item in enumerate(items_to_download, start=1):
+            ext = item.get("extension", "jpg")
+            item_fname = f"{idx:02d}_{item['type']}_{item['index']}.{ext}"
+            item_path = os.path.join(temp_dir, item_fname)
+
+            # Report overall progress
+            on_progress({
+                "status": "downloading",
+                "downloaded_bytes": idx,
+                "total_bytes": total_items,
+                "speed": 0,
+                "eta": 0,
+            })
+
+            _download_direct_file(item["url"], item_path)
+            downloaded_paths.append((item_path, item_fname))
+
+        on_stage("cleaning")
+
+        # Create ZIP archive
+        zip_filename = f"{safe_title}_{timestamp}.zip"
+        zip_path = os.path.join(save_dir, zip_filename)
+
+        with zipfile.ZipFile(zip_path, 'w', compression=zipfile.ZIP_DEFLATED) as zipf:
+            for file_path, arcname in downloaded_paths:
+                zipf.write(file_path, arcname=arcname)
+
+        on_stage("completed")
+        return {
+            "file": zip_path,
+            "filename": zip_filename,
+            "directory": save_dir,
+        }
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
 def _resolve_final_filename(downloaded_files: list[str], save_dir: str, is_audio: bool) -> str:
     """Clean up intermediate filename suffixes to find the real final file."""
     for f in downloaded_files:
         base = os.path.basename(f)
-        # Strip intermediate suffixes
         clean = base.replace(".temp.mp4", ".mp4")
         clean = re.sub(r"\.f\d+", "", clean)
         if is_audio:

@@ -1,8 +1,8 @@
 """
-routes.py — FastAPI APIRouter with all API endpoints.
+routes.py — FastAPI APIRouter with all API endpoints for YouTube & Instagram downloading.
 
 Endpoints:
-  POST   /api/analyze                 - Fetch video info
+  POST   /api/analyze                 - Fetch media info (YouTube / Instagram)
   POST   /api/download                - Start download job
   GET    /api/progress/{job_id}       - SSE progress stream
   GET    /api/job/{job_id}            - Job status (polling fallback)
@@ -27,15 +27,19 @@ from typing import AsyncGenerator
 from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from backend.downloader import get_ffmpeg_path, get_video_info, get_default_download_dir
+from backend.downloader import (
+    get_ffmpeg_path,
+    get_video_info,
+    get_default_download_dir,
+    MediaExtractionError,
+)
 from backend.jobs import job_manager, load_history, delete_history_entry
 from backend.schemas import AnalyzeRequest, DownloadRequest, SettingsUpdateRequest
 from backend.security import analyze_limiter, download_limiter
 from backend.validator import (
-    validate_youtube_url,
+    validate_media_url,
     validate_download_path,
     validate_local_file_path,
-    is_playlist_url,
     is_mixed_url,
     strip_playlist_from_url,
     get_safe_download_root,
@@ -52,7 +56,7 @@ _DEFAULT_SETTINGS = {
     "download_dir": os.path.join(_PROJECT_ROOT, "downloads"),
     "default_quality": "best",
     "max_concurrent": 2,
-    "theme": "dark",
+    "theme": "light",
 }
 
 
@@ -78,10 +82,13 @@ def _save_settings(settings: dict) -> None:
         json.dump(settings, f, indent=2, ensure_ascii=False)
 
 
-def _safe_error(user_msg: str, log_msg: str = "", status_code: int = 400) -> JSONResponse:
+def _safe_error(user_msg: str, log_msg: str = "", status_code: int = 400, error_code: str = "ERROR") -> JSONResponse:
     if log_msg:
         logger.warning(log_msg)
-    return JSONResponse(status_code=status_code, content={"success": False, "error": user_msg})
+    return JSONResponse(
+        status_code=status_code,
+        content={"success": False, "error": user_msg, "error_code": error_code}
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -128,8 +135,8 @@ except Exception as exc:
             [sys.executable, "-c", picker_script, initial_dir],
             capture_output=True,
             text=True,
-            timeout=120,   # user has up to 2 min to pick a folder
-            shell=False,   # NEVER shell=True
+            timeout=120,
+            shell=False,
         )
     except subprocess.TimeoutExpired:
         logger.warning("Folder picker timed out.")
@@ -152,16 +159,12 @@ except Exception as exc:
 
 @router.get("/select-folder")
 async def select_folder():
-    """
-    Open native Windows folder selection dialog in a dedicated subprocess.
-    Uses asyncio.to_thread so FastAPI's event loop remains fully responsive.
-    """
+    """Open native Windows folder selection dialog."""
     settings = _load_settings()
     initial_dir = settings.get("download_dir") or get_safe_download_root()
     if not os.path.isdir(initial_dir):
         initial_dir = get_safe_download_root()
 
-    # Run blocking subprocess in threadpool
     result = await asyncio.to_thread(_run_native_folder_picker, initial_dir)
 
     if result.get("cancelled"):
@@ -182,7 +185,6 @@ async def select_folder():
     resolved = path_result
     logger.info("[Directory] Selected download folder: %s", resolved)
 
-    # Persist immediately to settings.json and .last_download_dir
     settings["download_dir"] = resolved
     try:
         _save_settings(settings)
@@ -207,33 +209,38 @@ async def select_folder():
 async def analyze(request: Request, body: AnalyzeRequest):
     raw_url = (body.url or "").strip()
     if not raw_url:
-        return _safe_error("Please enter a YouTube URL.")
+        return _safe_error("Please enter a YouTube or Instagram URL.")
 
-    valid, result = validate_youtube_url(raw_url)
+    valid, clean_url, media_info = validate_media_url(raw_url)
     if not valid:
-        return _safe_error(result)
+        return _safe_error(clean_url)
 
-    clean_url = result
+    platform = media_info.get("platform", "youtube")
+    has_playlist = media_info.get("is_playlist", False)
+    is_mixed = media_info.get("is_mixed", False)
 
-    # Detect playlist / mixed URL context
-    has_playlist = is_playlist_url(clean_url)
-    is_mixed = is_mixed_url(clean_url)
-
-    # noplaylist default: single video unless pure playlist URL
     noplaylist = not (has_playlist and not is_mixed)
 
     try:
-        # get_video_info performs network I/O with yt-dlp; run in thread
         info = await asyncio.to_thread(get_video_info, clean_url, noplaylist=noplaylist)
-    except RuntimeError as e:
-        return _safe_error(str(e))
+    except MediaExtractionError as e:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "success": False,
+                "error": e.message,
+                "error_code": e.code,
+                "platform": platform,
+            }
+        )
     except Exception as e:
         logger.error("Analyze error: %s", e, exc_info=True)
-        return _safe_error("Failed to fetch video information. Please check the URL.")
+        return _safe_error(f"Failed to fetch media information: {str(e)}")
 
     return {
         "success": True,
         "url": clean_url,
+        "platform": platform,
         "has_playlist": has_playlist,
         "is_mixed": is_mixed,
         **info,
@@ -260,24 +267,16 @@ async def start_download(request: Request, body: DownloadRequest):
     if not raw_url:
         return _safe_error("No URL provided.")
 
-    valid, result, platform_info = sanitize_and_validate_url(raw_url)
+    valid, clean_url, media_info = validate_media_url(raw_url)
     if not valid:
-        return _safe_error(result)
-    clean_url = result
+        return _safe_error(clean_url)
 
-    # Strict DRM & download eligibility check:
-    # Netflix, Prime Video, and DRM-protected streams can NEVER be downloaded.
-    if platform_info["status"] == STATUS_DRM_PROTECTED:
-        return _safe_error(
-            f"{platform_info['name']} content is DRM protected and cannot be downloaded by this application.",
-            status_code=400,
-        )
-
-    if platform_info["status"] == STATUS_UNSUPPORTED:
-        return _safe_error("This platform is not supported for downloading.", status_code=400)
+    platform = body.platform or media_info.get("platform") or "youtube"
+    media_type = body.media_type or media_info.get("media_type") or "video"
+    selected_items = body.selected_items
 
     # Strip playlist params if single video requested
-    if noplaylist and is_mixed_url(clean_url):
+    if platform == "youtube" and noplaylist and is_mixed_url(clean_url):
         clean_url = strip_playlist_from_url(clean_url)
 
     # Validate/determine download directory
@@ -297,8 +296,8 @@ async def start_download(request: Request, body: DownloadRequest):
     os.makedirs(save_dir, exist_ok=True)
     logger.info("[Directory] Saving to: %s", save_dir)
 
-    # FFmpeg check for video merging
-    if not audio_only and not get_ffmpeg_path():
+    # FFmpeg check for YouTube video merging
+    if platform == "youtube" and not audio_only and not get_ffmpeg_path():
         return _safe_error(
             "FFmpeg is required for merging video and audio streams. "
             "Please install FFmpeg or configure its path."
@@ -322,6 +321,9 @@ async def start_download(request: Request, body: DownloadRequest):
         thumbnail=thumbnail,
         channel=channel,
         duration_str=duration_str,
+        platform=platform,
+        media_type=media_type,
+        selected_items=selected_items,
     )
 
     return {
@@ -344,11 +346,7 @@ async def progress_stream(job_id: str):
         return StreamingResponse(not_found(), media_type="text/event-stream")
 
     async def sse_event_generator() -> AsyncGenerator[str, None]:
-        # Iterate over the job's queue without blocking FastAPI
-        # job.iter_events is a generator, so run chunks or wrap with to_thread
-        loop = asyncio.get_event_loop()
         while True:
-            # Poll an event from job queue via thread to avoid blocking loop
             try:
                 event = await asyncio.to_thread(job._event_queue.get, True, 20.0)
                 if event.get("type") == "heartbeat":
@@ -357,7 +355,6 @@ async def progress_stream(job_id: str):
                     yield f"data: {json.dumps(event)}\n\n"
 
                 if event.get("status") in ("completed", "failed", "cancelled"):
-                    # Drain remaining events
                     while not job._event_queue.empty():
                         try:
                             rem = job._event_queue.get_nowait()
@@ -366,9 +363,7 @@ async def progress_stream(job_id: str):
                             break
                     break
             except Exception:
-                # Timeout occurred — yield heartbeat
                 yield ": heartbeat\n\n"
-                # If job reached terminal state while waiting
                 if job.status in ("completed", "failed", "cancelled"):
                     break
 
@@ -428,7 +423,6 @@ async def open_file(entry_id: str):
     if not file_path or not os.path.exists(file_path):
         return _safe_error("File no longer exists.")
 
-    # Security: validate the file's directory is a writable local dir
     path_valid, _ = validate_local_file_path(file_path)
     if not path_valid:
         return _safe_error("Access denied.", status_code=403)

@@ -17,7 +17,7 @@ import threading
 import time
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 
 logger = logging.getLogger(__name__)
 
@@ -47,9 +47,22 @@ _HISTORY_FILE = os.path.join(
 class Job:
     """Represents a single download job."""
 
-    def __init__(self, job_id: str, url: str, quality: str, save_dir: str,
-                 audio_only: bool, noplaylist: bool, title: str = "",
-                 thumbnail: str = "", channel: str = "", duration_str: str = ""):
+    def __init__(
+        self,
+        job_id: str,
+        url: str,
+        quality: str,
+        save_dir: str,
+        audio_only: bool,
+        noplaylist: bool,
+        title: str = "",
+        thumbnail: str = "",
+        channel: str = "",
+        duration_str: str = "",
+        platform: str = "youtube",
+        media_type: str = "video",
+        selected_items: Optional[List[int]] = None,
+    ):
         self.job_id = job_id
         self.url = url
         self.quality = quality
@@ -60,6 +73,9 @@ class Job:
         self.thumbnail = thumbnail
         self.channel = channel
         self.duration_str = duration_str
+        self.platform = platform
+        self.media_type = media_type
+        self.selected_items = selected_items or []
 
         self.status = "pending"
         self.percentage = 0.0
@@ -116,6 +132,9 @@ class Job:
             "duration_str": self.duration_str,
             "quality": self.quality,
             "audio_only": self.audio_only,
+            "platform": self.platform,
+            "media_type": self.media_type,
+            "selected_items": self.selected_items,
             "file_path": self.file_path,
             "filename": self.filename,
             "directory": self.save_dir,
@@ -152,6 +171,9 @@ class JobManager:
         thumbnail: str = "",
         channel: str = "",
         duration_str: str = "",
+        platform: str = "youtube",
+        media_type: str = "video",
+        selected_items: Optional[List[int]] = None,
     ) -> "Job":
         """Create a new job and schedule it for background execution."""
         job_id = str(uuid.uuid4())
@@ -166,6 +188,9 @@ class JobManager:
             thumbnail=thumbnail,
             channel=channel,
             duration_str=duration_str,
+            platform=platform,
+            media_type=media_type,
+            selected_items=selected_items,
         )
 
         with self._lock:
@@ -203,7 +228,6 @@ class JobManager:
 
     def _run_job(self, job: Job) -> None:
         """Execute a download job in the background thread."""
-        # Honour concurrency limit (blocks until a slot is free)
         self._semaphore.acquire()
         try:
             self._execute(job)
@@ -211,10 +235,10 @@ class JobManager:
             self._semaphore.release()
 
     def _execute(self, job: Job) -> None:
-        from backend.downloader import execute_download  # lazy import
+        from backend.downloader import execute_download, execute_carousel_download
 
         def on_progress(d: dict) -> None:
-            """yt-dlp progress hook → update job state and push event."""
+            """Progress hook → update job state and push event."""
             status = d.get("status", "")
 
             if status == "downloading":
@@ -265,15 +289,28 @@ class JobManager:
             })
 
         try:
-            result = execute_download(
-                url=job.url,
-                quality=job.quality,
-                save_dir=job.save_dir,
-                audio_only=job.audio_only,
-                noplaylist=job.noplaylist,
-                on_progress=on_progress,
-                on_stage=on_stage,
-            )
+            if job.platform == "instagram" and job.media_type == "carousel":
+                result = execute_carousel_download(
+                    url=job.url,
+                    selected_items=job.selected_items,
+                    save_dir=job.save_dir,
+                    title=job.title,
+                    on_progress=on_progress,
+                    on_stage=on_stage,
+                )
+            else:
+                result = execute_download(
+                    url=job.url,
+                    quality=job.quality,
+                    save_dir=job.save_dir,
+                    audio_only=job.audio_only,
+                    noplaylist=job.noplaylist,
+                    on_progress=on_progress,
+                    on_stage=on_stage,
+                    media_type=job.media_type,
+                    platform=job.platform,
+                    title=job.title,
+                )
 
             job.status = "completed"
             job.stage = "completed"
@@ -322,6 +359,7 @@ _history_lock = threading.Lock()
 
 def _save_to_history(job: Job) -> None:
     """Append completed/failed job to the JSON history file."""
+    format_type = "mp3" if job.audio_only else ("zip" if job.media_type == "carousel" and len(job.selected_items) > 1 else ("jpg" if job.media_type == "image" else "mp4"))
     entry = {
         "id": job.job_id,
         "title": job.title,
@@ -330,7 +368,9 @@ def _save_to_history(job: Job) -> None:
         "duration_str": job.duration_str,
         "quality": job.quality,
         "audio_only": job.audio_only,
-        "format": "mp3" if job.audio_only else "mp4",
+        "platform": job.platform,
+        "media_type": job.media_type,
+        "format": format_type,
         "status": job.status,
         "file_path": job.file_path,
         "filename": job.filename,
@@ -342,19 +382,13 @@ def _save_to_history(job: Job) -> None:
 
     with _history_lock:
         history = _load_history_raw()
-        history.insert(0, entry)  # newest first
-        # Keep only last 200 entries
+        history.insert(0, entry)
         history = history[:200]
         try:
             with open(_HISTORY_FILE, "w", encoding="utf-8") as f:
                 json.dump(history, f, indent=2, ensure_ascii=False)
         except Exception as e:
-            logger.error("Failed to save history: %s", e)
-
-
-def load_history() -> list[dict]:
-    with _history_lock:
-        return _load_history_raw()
+            logger.warning("Could not save history: %s", e)
 
 
 def _load_history_raw() -> list[dict]:
@@ -368,48 +402,49 @@ def _load_history_raw() -> list[dict]:
         return []
 
 
+def load_history() -> list[dict]:
+    with _history_lock:
+        return _load_history_raw()
+
+
 def delete_history_entry(entry_id: str) -> bool:
     with _history_lock:
         history = _load_history_raw()
-        original_len = len(history)
-        history = [e for e in history if e.get("id") != entry_id]
-        if len(history) == original_len:
+        new_hist = [h for h in history if h.get("id") != entry_id]
+        if len(new_hist) == len(history):
             return False
         try:
             with open(_HISTORY_FILE, "w", encoding="utf-8") as f:
-                json.dump(history, f, indent=2, ensure_ascii=False)
+                json.dump(new_hist, f, indent=2, ensure_ascii=False)
             return True
-        except Exception as e:
-            logger.error("Failed to delete history entry: %s", e)
+        except Exception:
             return False
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Formatting helpers
 # ---------------------------------------------------------------------------
 
 def _format_speed(bps: float) -> str:
     if not bps:
         return ""
-    for unit in ("B/s", "KiB/s", "MiB/s", "GiB/s"):
-        if bps < 1024:
-            return f"{bps:.1f} {unit}"
-        bps /= 1024
-    return f"{bps:.1f} TiB/s"
+    if bps >= 1024 * 1024:
+        return f"{bps / (1024 * 1024):.1f} MB/s"
+    if bps >= 1024:
+        return f"{bps / 1024:.0f} KB/s"
+    return f"{bps:.0f} B/s"
 
 
-def _format_eta(seconds: int) -> str:
-    if not seconds:
+def _format_eta(sec: int) -> str:
+    if not sec:
         return ""
-    m, s = divmod(int(seconds), 60)
+    m, s = divmod(int(sec), 60)
     h, m = divmod(m, 60)
     if h:
-        return f"{h:02d}:{m:02d}:{s:02d}"
-    return f"{m:02d}:{s:02d}"
+        return f"ETA {h}h {m}m"
+    if m:
+        return f"ETA {m}m {s:02d}s"
+    return f"ETA {s}s"
 
 
-# ---------------------------------------------------------------------------
-# Global singleton
-# ---------------------------------------------------------------------------
-
-job_manager = JobManager(max_concurrent=MAX_CONCURRENT_DOWNLOADS)
+job_manager = JobManager()

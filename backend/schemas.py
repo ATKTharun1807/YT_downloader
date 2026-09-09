@@ -2,17 +2,17 @@
 schemas.py — Pydantic schemas for YT_DOWNLOADER FastAPI backend.
 """
 
-from typing import Optional
+from typing import Optional, List
 from pydantic import BaseModel, Field
 
 
 class AnalyzeRequest(BaseModel):
-    url: str = Field(..., description="YouTube video or playlist URL")
+    url: str = Field(..., description="YouTube or Instagram media URL")
 
 
 class DownloadRequest(BaseModel):
-    url: str = Field(..., description="YouTube video or playlist URL")
-    quality: str = Field(default="best", description="Requested video quality or 'audio'")
+    url: str = Field(..., description="YouTube or Instagram media URL")
+    quality: str = Field(default="best", description="Requested quality, format, or 'audio'")
     download_dir: Optional[str] = Field(default=None, description="Optional custom download directory")
     audio_only: bool = Field(default=False, description="Whether to extract audio only")
     noplaylist: bool = Field(default=True, description="Whether to download single video only if playlist detected")
@@ -20,6 +20,9 @@ class DownloadRequest(BaseModel):
     thumbnail: Optional[str] = Field(default="", max_length=2000)
     channel: Optional[str] = Field(default="", max_length=200)
     duration_str: Optional[str] = Field(default="", max_length=20)
+    platform: Optional[str] = Field(default="youtube", description="Media platform ('youtube' or 'instagram')")
+    media_type: Optional[str] = Field(default="video", description="'video', 'image', 'reel', or 'carousel'")
+    selected_items: Optional[List[int]] = Field(default=None, description="Selected carousel item indices (1-indexed)")
 
 
 class SettingsUpdateRequest(BaseModel):

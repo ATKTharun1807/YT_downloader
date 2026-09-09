@@ -1,20 +1,10 @@
 /**
- * app.js — YT_DOWNLOADER frontend SPA logic
+ * app.js — YT_DOWNLOADER Frontend SPA Logic
  *
- * Handles:
- *  - SPA navigation (sidebar + mobile nav)
- *  - Multi-platform live auto-detection (YouTube, JioHotstar, Netflix, Prime Video)
- *  - URL analysis (POST /api/analyze)
- *  - Platform support & DRM disclosures (GET /api/platforms)
- *  - Quality selection
- *  - Playlist single/full choice
- *  - Download initiation (POST /api/download)
- *  - Real-time progress via SSE (GET /api/progress/<job_id>)
- *  - Completion display + open file/folder
- *  - Download history (GET/DELETE /api/downloads)
- *  - Settings (GET/POST /api/settings)
- *  - FFmpeg status check
- *  - Theme persistence
+ * Supports:
+ *  - YouTube: Videos (4K, 1080p, etc.), Playlists, MP3 Audio
+ *  - Instagram: Reels, Single Image Posts, Single Video Posts, Carousels (ZIP / Direct)
+ *  - Live URL analysis, real-time SSE progress, download history, native folder selector
  */
 
 'use strict';
@@ -27,14 +17,15 @@ const state = {
   videoInfo: null,          // result from /api/analyze
   selectedQuality: 'best',
   noplaylist: true,
+  selectedCarouselItems: new Set(),
   currentJobId: null,
-  currentJobHistory: null,  // { id, title, quality, audio_only, directory }
+  currentJobHistory: null,
   settings: {},
   sseSource: null,
 };
 
 /* ============================================================
-   DOM refs
+   DOM Elements
    ============================================================ */
 const $ = id => document.getElementById(id);
 
@@ -42,34 +33,26 @@ const dom = {
   // Nav
   navItems: document.querySelectorAll('[data-page]'),
 
-  // Home page
+  // Home Page
   urlInput:          $('urlInput'),
   analyzeBtn:        $('analyzeBtn'),
   analyzeBtnText:    $('analyzeBtnText'),
   analyzeBtnIcon:    $('analyzeBtnIcon'),
   analyzeError:      $('analyzeError'),
+  analyzeErrorText:  $('analyzeErrorText'),
+  retryAnalyzeBtn:   $('retryAnalyzeBtn'),
   inputCardTitle:    $('inputCardTitle'),
 
-  // Platform Selector & Detection
-  platformStrip:     $('platformStrip'),
-  platformTabs:      document.querySelectorAll('.platform-tab'),
-  detectionPill:     $('detectionPill'),
-  detectionDot:      $('detectionDot'),
-  detectionText:     $('detectionText'),
-
-  // DRM Notice Card
-  drmNoticeCard:            $('drmNoticeCard'),
-  drmCardTitle:             $('drmCardTitle'),
-  drmCardMessage:           $('drmCardMessage'),
-  openExternalPlatformBtn:  $('openExternalPlatformBtn'),
-  openExternalPlatformText: $('openExternalPlatformText'),
-
+  // YouTube Playlist Card
   playlistCard:      $('playlistCard'),
   playlistCount:     $('playlistCount'),
   radioSingle:       $('radioSingle'),
   radioPlaylist:     $('radioPlaylist'),
 
+  // Skeleton Loader
   skeletonCard:      $('skeletonCard'),
+
+  // Single Video / Media Card
   videoCard:         $('videoCard'),
   videoThumbnail:    $('videoThumbnail'),
   videoTitle:        $('videoTitle'),
@@ -78,6 +61,16 @@ const dom = {
   videoViews:        $('videoViews'),
   qualityGrid:       $('qualityGrid'),
 
+  // Instagram Carousel Card
+  carouselCard:          $('carouselCard'),
+  carouselCount:         $('carouselCount'),
+  carouselSubtitle:      $('carouselSubtitle'),
+  carouselSelectAll:     $('carouselSelectAll'),
+  carouselClearAll:      $('carouselClearAll'),
+  carouselSelectedCount: $('carouselSelectedCount'),
+  carouselGrid:          $('carouselGrid'),
+
+  // Download Section
   downloadSection:   $('downloadSection'),
   downloadDirDisplay:$('downloadDirDisplay'),
   changeDownloadDir: $('changeDownloadDir'),
@@ -87,9 +80,7 @@ const dom = {
   downloadBtnText:   $('downloadBtnText'),
   downloadError:     $('downloadError'),
 
-  // Platforms Page
-  platformsGrid:     $('platformsGrid'),
-
+  // Progress Card
   progressCard:      $('progressCard'),
   progressStageText: $('progressStageText'),
   progressBarFill:   $('progressBarFill'),
@@ -98,6 +89,7 @@ const dom = {
   progressSpeed:     $('progressSpeed'),
   progressEta:       $('progressEta'),
 
+  // Complete Card
   completeCard:      $('completeCard'),
   completeTitle:     $('completeTitle'),
   completeQuality:   $('completeQuality'),
@@ -107,13 +99,13 @@ const dom = {
   openFolderBtn:     $('openFolderBtn'),
   downloadAnotherBtn:$('downloadAnotherBtn'),
 
-  // Downloads page
+  // Downloads Page
   historyBody:       $('historyBody'),
   historyEmpty:      $('historyEmpty'),
   historyTableWrap:  $('historyTableWrap'),
   refreshHistoryBtn: $('refreshHistoryBtn'),
 
-  // Settings page
+  // Settings Page
   settingsDirDisplay:    $('settingsDirDisplay'),
   settingsChangeDirBtn:  $('settingsChangeDirBtn'),
   settingsQuality:       $('settingsQuality'),
@@ -123,7 +115,7 @@ const dom = {
   saveSettingsBtn:       $('saveSettingsBtn'),
   settingsFeedback:      $('settingsFeedback'),
 
-  // Sidebar footer
+  // Sidebar Footer
   ffmpegDot:   $('ffmpegDot'),
   ffmpegLabel: $('ffmpegLabel'),
 };
@@ -134,12 +126,10 @@ const dom = {
 function navigateTo(page) {
   state.currentPage = page;
 
-  // Update page visibility
   document.querySelectorAll('.page').forEach(el => el.classList.remove('active'));
   const target = $(`page-${page}`);
   if (target) target.classList.add('active');
 
-  // Update nav items
   document.querySelectorAll('[data-page]').forEach(el => {
     el.classList.toggle('active', el.dataset.page === page);
     if (el.tagName === 'A') {
@@ -147,96 +137,20 @@ function navigateTo(page) {
     }
   });
 
-  // Page-specific init
-  if (page === 'platforms') loadPlatforms();
-  if (page === 'downloads') loadHistory();
-  if (page === 'settings') loadSettings();
+  if (page === 'downloads') loadDownloadHistory();
+  if (page === 'settings')  loadSettingsUI();
 }
 
-document.querySelectorAll('[data-page]').forEach(el => {
+dom.navItems.forEach(el => {
   el.addEventListener('click', e => {
     e.preventDefault();
-    navigateTo(el.dataset.page);
+    const page = el.dataset.page;
+    if (page) navigateTo(page);
   });
 });
 
 /* ============================================================
-   Platform Auto-Detection (Client-Side Immediate)
-   ============================================================ */
-function detectClientPlatform(url) {
-  if (!url) return null;
-  const lower = url.toLowerCase();
-  if (lower.includes('youtube.com') || lower.includes('youtu.be')) {
-    return { id: 'youtube', name: 'YouTube', status: 'supported', text: '✓ YouTube detected' };
-  }
-  if (lower.includes('hotstar.com') || lower.includes('jiostar.com') || lower.includes('jiohotstar.com')) {
-    return { id: 'jiohotstar', name: 'JioHotstar', status: 'limited', text: '✓ JioHotstar detected' };
-  }
-  if (lower.includes('netflix.com')) {
-    return { id: 'netflix', name: 'Netflix', status: 'drm', text: '🔒 Netflix — DRM protected' };
-  }
-  if (lower.includes('primevideo.com') || (lower.includes('amazon.') && (lower.includes('/video') || lower.includes('/gp/video')))) {
-    return { id: 'primevideo', name: 'Prime Video', status: 'drm', text: '🔒 Prime Video — DRM protected' };
-  }
-  return null;
-}
-
-function updatePlatformUIFromInput() {
-  const url = dom.urlInput.value.trim();
-  const detection = detectClientPlatform(url);
-
-  if (!detection) {
-    if (dom.detectionPill) {
-      dom.detectionPill.classList.add('hidden');
-      dom.detectionPill.className = 'detection-pill hidden';
-    }
-    return;
-  }
-
-  // Update tabs
-  highlightPlatformTab(detection.id);
-
-  // Update pill
-  if (dom.detectionPill) {
-    dom.detectionPill.className = `detection-pill ${detection.status}`;
-    dom.detectionText.textContent = detection.text;
-    dom.detectionPill.classList.remove('hidden');
-  }
-}
-
-function highlightPlatformTab(platformId) {
-  if (!dom.platformTabs) return;
-  dom.platformTabs.forEach(tab => {
-    tab.classList.toggle('active', tab.dataset.platform === platformId);
-  });
-}
-
-// Event listeners for URL typing/pasting
-dom.urlInput.addEventListener('input', updatePlatformUIFromInput);
-dom.urlInput.addEventListener('paste', () => {
-  setTimeout(updatePlatformUIFromInput, 50);
-});
-
-// Platform tab clicks: prompt user with placeholder hint
-if (dom.platformTabs) {
-  dom.platformTabs.forEach(tab => {
-    tab.addEventListener('click', () => {
-      const platform = tab.dataset.platform;
-      highlightPlatformTab(platform);
-      const placeholders = {
-        youtube: 'https://www.youtube.com/watch?v=...',
-        jiohotstar: 'https://www.hotstar.com/...',
-        netflix: 'https://www.netflix.com/title/...',
-        primevideo: 'https://www.primevideo.com/detail/...',
-      };
-      dom.urlInput.placeholder = placeholders[platform] || 'Paste media URL...';
-      dom.urlInput.focus();
-    });
-  });
-}
-
-/* ============================================================
-   FFmpeg status
+   FFmpeg Status
    ============================================================ */
 async function checkFfmpeg() {
   try {
@@ -250,16 +164,21 @@ async function checkFfmpeg() {
 }
 
 /* ============================================================
-   Analyze
+   Analyze URL
    ============================================================ */
 dom.analyzeBtn.addEventListener('click', handleAnalyze);
 dom.urlInput.addEventListener('keydown', e => { if (e.key === 'Enter') handleAnalyze(); });
+if (dom.retryAnalyzeBtn) {
+  dom.retryAnalyzeBtn.addEventListener('click', handleAnalyze);
+}
 
 async function handleAnalyze() {
   const url = dom.urlInput.value.trim();
-  if (!url) { showAnalyzeError('Please enter a media URL.'); return; }
+  if (!url) {
+    showAnalyzeError('Please enter a YouTube or Instagram URL.');
+    return;
+  }
 
-  // UI: analyzing state
   hideAll();
   dom.skeletonCard.classList.remove('hidden');
   setAnalyzeBtnLoading(true);
@@ -285,18 +204,13 @@ async function handleAnalyze() {
     state.videoInfo = data;
     state.noplaylist = true;
 
-    // Synchronize active platform tab
-    if (data.platform) {
-      highlightPlatformTab(data.platform);
-    }
-
-    // 1. Check if platform or stream is DRM Protected
-    if (data.status === 'DRM_PROTECTED' || !data.can_download) {
-      showDrmNotice(data);
+    // Instagram Carousel
+    if (data.platform === 'instagram' && data.is_carousel) {
+      renderCarouselInfo(data);
       return;
     }
 
-    // 2. Playlists
+    // YouTube Playlist
     if (data.is_mixed && data.has_playlist) {
       dom.playlistCount.textContent = `${data.playlist_count || '?'} videos`;
       dom.playlistCard.classList.remove('hidden');
@@ -313,42 +227,27 @@ async function handleAnalyze() {
   } catch (err) {
     dom.skeletonCard.classList.add('hidden');
     setAnalyzeBtnLoading(false);
-    showAnalyzeError('Network error. Please check your connection.');
+    showAnalyzeError('Network error. Please check your internet connection.');
   }
 }
 
-function showDrmNotice(data) {
-  if (!dom.drmNoticeCard) return;
-  dom.drmCardTitle.textContent = `${data.platform_name || 'Platform'} Content is Protected`;
-  dom.drmCardMessage.textContent = data.message || 'This content is DRM protected and cannot be downloaded by this application.';
-  dom.openExternalPlatformBtn.href = data.external_url || data.url || '#';
-  dom.openExternalPlatformText.textContent = `Open on ${data.platform_name || 'Platform'}`;
-  dom.drmNoticeCard.classList.remove('hidden');
-}
-
-// Playlist radio: re-analyze when user changes choice
-dom.radioSingle.addEventListener('change', () => {
-  state.noplaylist = true;
-  if (state.videoInfo && state.videoInfo.is_mixed) {
-    renderVideoInfo(state.videoInfo);
-  }
-});
-
-dom.radioPlaylist.addEventListener('change', () => {
-  state.noplaylist = false;
-  if (state.videoInfo) {
-    renderPlaylistInfo(state.videoInfo);
-  }
-});
-
+/* ============================================================
+   Render Video / Post Info
+   ============================================================ */
 function renderVideoInfo(data) {
   const info = data.is_playlist ? (data.entries?.[0] || {}) : data;
 
   dom.videoThumbnail.src = info.thumbnail || '';
-  dom.videoThumbnail.alt = info.title || 'Video thumbnail';
+  dom.videoThumbnail.alt = info.title || 'Media thumbnail';
   dom.videoTitle.textContent = info.title || 'Unknown Title';
-  dom.videoChannel.textContent = info.channel ? `📺 ${info.channel}` : '';
-  dom.videoDuration.textContent = `⏱ ${info.duration_str || 'Unknown'}`;
+  dom.videoChannel.textContent = info.channel || (info.uploader ? `@${info.uploader}` : '');
+
+  if (info.duration_str) {
+    dom.videoDuration.textContent = `⏱ ${info.duration_str}`;
+    dom.videoDuration.style.display = 'inline-flex';
+  } else {
+    dom.videoDuration.style.display = 'none';
+  }
 
   if (info.view_count) {
     dom.videoViews.textContent = `👁 ${formatViews(info.view_count)}`;
@@ -357,24 +256,23 @@ function renderVideoInfo(data) {
     dom.videoViews.style.display = 'none';
   }
 
-  // Quality grid
   buildQualityGrid(info.quality_options || []);
 
-  // Dynamic Download CTA based on platform
-  if (dom.downloadBtnText) {
-    if (data.platform === 'youtube') {
-      dom.downloadBtnText.textContent = '↓ Download 4K / MP4 Video';
-    } else if (data.platform === 'jiohotstar') {
-      dom.downloadBtnText.textContent = '↓ Download JioHotstar Video';
+  // Set CTA button text
+  if (data.platform === 'instagram') {
+    if (data.media_type === 'image') {
+      dom.downloadBtnText.textContent = 'Download Image (Full Resolution)';
+    } else if (data.media_type === 'reel') {
+      dom.downloadBtnText.textContent = 'Download Instagram Reel (MP4)';
     } else {
-      dom.downloadBtnText.textContent = '↓ Download Video';
+      dom.downloadBtnText.textContent = 'Download Instagram Video';
     }
+  } else {
+    dom.downloadBtnText.textContent = 'Download Video';
   }
 
   dom.videoCard.classList.remove('hidden');
   dom.downloadSection.classList.remove('hidden');
-
-  // Set download dir display from settings
   dom.downloadDirDisplay.textContent = state.settings.download_dir || './downloads';
 }
 
@@ -385,7 +283,6 @@ function renderPlaylistInfo(data) {
   dom.videoDuration.textContent = `🎬 ${data.playlist_count || '?'} videos`;
   dom.videoViews.style.display = 'none';
 
-  // Use "best" as default for playlists
   buildQualityGrid([
     { value: 'best', label: 'Best Available', description: 'Highest quality for each video' },
     { value: '1080', label: 'Full HD (1080p)', description: 'MP4 video' },
@@ -394,17 +291,138 @@ function renderPlaylistInfo(data) {
     { value: 'audio',label: 'Audio Only — MP3 192kbps', description: 'Extract audio' },
   ]);
 
-  if (dom.downloadBtnText) {
-    dom.downloadBtnText.textContent = '↓ Download Entire Playlist';
-  }
-
+  dom.downloadBtnText.textContent = 'Download Entire Playlist';
   dom.videoCard.classList.remove('hidden');
   dom.downloadSection.classList.remove('hidden');
   dom.downloadDirDisplay.textContent = state.settings.download_dir || './downloads';
 }
 
 /* ============================================================
-   Quality Grid
+   Render Instagram Carousel
+   ============================================================ */
+function renderCarouselInfo(data) {
+  const items = data.items || [];
+  dom.carouselCount.textContent = `${items.length} items`;
+  dom.carouselSubtitle.textContent = `Post by ${data.channel || '@' + data.uploader} — choose items to download:`;
+
+  // Select all items by default
+  state.selectedCarouselItems = new Set(items.map(i => i.index));
+  buildCarouselGrid(items);
+  updateCarouselSelectionUI();
+
+  dom.carouselCard.classList.remove('hidden');
+  dom.downloadSection.classList.remove('hidden');
+  dom.downloadDirDisplay.textContent = state.settings.download_dir || './downloads';
+}
+
+function buildCarouselGrid(items) {
+  dom.carouselGrid.innerHTML = '';
+
+  items.forEach(item => {
+    const card = document.createElement('div');
+    const isSelected = state.selectedCarouselItems.has(item.index);
+    card.className = `carousel-item-card ${isSelected ? 'selected' : ''}`;
+    card.dataset.index = item.index;
+
+    const typeIcon = item.type === 'video' ? '🎬 Video' : '📸 Photo';
+    const resText = `${item.width || 1080}×${item.height || 1080}`;
+
+    card.innerHTML = `
+      <div class="carousel-thumb-wrap">
+        <img src="${escHtml(item.thumbnail || '')}" alt="Item #${item.index}" loading="lazy" />
+        <span class="carousel-badge-index">#${item.index}</span>
+        <span class="carousel-badge-type">${typeIcon}</span>
+        <div class="carousel-checkbox-wrap">
+          <input type="checkbox" ${isSelected ? 'checked' : ''} aria-label="Select item ${item.index}" />
+        </div>
+      </div>
+      <div class="carousel-item-meta">
+        <span>${resText}</span>
+        <span>${escHtml((item.extension || '').toUpperCase())}</span>
+      </div>
+    `;
+
+    const checkbox = card.querySelector('input[type="checkbox"]');
+
+    const toggleSelection = (e) => {
+      if (e.target !== checkbox) {
+        checkbox.checked = !checkbox.checked;
+      }
+      if (checkbox.checked) {
+        state.selectedCarouselItems.add(item.index);
+        card.classList.add('selected');
+      } else {
+        state.selectedCarouselItems.delete(item.index);
+        card.classList.remove('selected');
+      }
+      updateCarouselSelectionUI();
+    };
+
+    card.addEventListener('click', toggleSelection);
+    checkbox.addEventListener('change', (e) => {
+      e.stopPropagation();
+      if (checkbox.checked) {
+        state.selectedCarouselItems.add(item.index);
+        card.classList.add('selected');
+      } else {
+        state.selectedCarouselItems.delete(item.index);
+        card.classList.remove('selected');
+      }
+      updateCarouselSelectionUI();
+    });
+
+    dom.carouselGrid.appendChild(card);
+  });
+}
+
+function updateCarouselSelectionUI() {
+  const total = state.videoInfo?.items?.length || 0;
+  const count = state.selectedCarouselItems.size;
+  dom.carouselSelectedCount.textContent = `${count} of ${total} selected`;
+
+  if (count === 0) {
+    dom.downloadBtn.disabled = true;
+    dom.downloadBtnText.textContent = 'Select at least 1 item to download';
+  } else if (count === 1) {
+    dom.downloadBtn.disabled = false;
+    const selectedIdx = Array.from(state.selectedCarouselItems)[0];
+    const item = state.videoInfo.items.find(i => i.index === selectedIdx);
+    const typeLabel = item?.type === 'video' ? 'Video' : 'Photo';
+    dom.downloadBtnText.textContent = `Download Selected ${typeLabel} (#${selectedIdx})`;
+  } else {
+    dom.downloadBtn.disabled = false;
+    dom.downloadBtnText.textContent = `Download ${count} Items as ZIP Archive`;
+  }
+}
+
+// Select All / Clear All
+if (dom.carouselSelectAll) {
+  dom.carouselSelectAll.addEventListener('click', () => {
+    if (!state.videoInfo?.items) return;
+    state.selectedCarouselItems = new Set(state.videoInfo.items.map(i => i.index));
+    dom.carouselGrid.querySelectorAll('.carousel-item-card').forEach(card => {
+      card.classList.add('selected');
+      const cb = card.querySelector('input[type="checkbox"]');
+      if (cb) cb.checked = true;
+    });
+    updateCarouselSelectionUI();
+  });
+}
+
+if (dom.carouselClearAll) {
+  dom.carouselClearAll.addEventListener('click', () => {
+    state.selectedCarouselItems.clear();
+    dom.carouselGrid.querySelectorAll('.carousel-item-card').forEach(card => {
+      card.classList.remove('selected');
+      const cb = card.querySelector('input[type="checkbox"]');
+      if (cb) cb.checked = false;
+    });
+    updateCarouselSelectionUI();
+  });
+}
+
+/* ============================================================
+   Quality Grid Builder
    ============================================================ */
 function buildQualityGrid(options) {
   dom.qualityGrid.innerHTML = '';
@@ -428,7 +446,10 @@ function buildQualityGrid(options) {
 
     card.addEventListener('click', () => selectQuality(opt.value));
     card.addEventListener('keydown', e => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectQuality(opt.value); }
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        selectQuality(opt.value);
+      }
     });
 
     dom.qualityGrid.appendChild(card);
@@ -445,53 +466,7 @@ function selectQuality(value) {
 }
 
 /* ============================================================
-   Download directory — native folder picker
-   ============================================================ */
-dom.changeDownloadDir.addEventListener('click', openFolderPicker);
-
-async function openFolderPicker(targetDirDisplay, targetErrorEl) {
-  const dirDisplay = (targetDirDisplay instanceof HTMLElement) ? targetDirDisplay : dom.downloadDirDisplay;
-  const errorEl    = (targetErrorEl   instanceof HTMLElement) ? targetErrorEl   : dom.downloadDirError;
-
-  const btn = dom.changeDownloadDir;
-  const originalText = btn.innerHTML;
-
-  btn.disabled = true;
-  btn.innerHTML = '⏳ Opening folder selector…';
-  errorEl.classList.add('hidden');
-
-  try {
-    const res = await fetch('/api/select-folder');
-    const data = await res.json();
-
-    if (data.cancelled) return;
-
-    if (!data.success) {
-      errorEl.textContent = data.error || 'Unable to select download folder.';
-      errorEl.classList.remove('hidden');
-      return;
-    }
-
-    const newDir = data.directory;
-    state.settings.download_dir = newDir;
-    dirDisplay.textContent = newDir;
-
-    btn.innerHTML = '✅ Location updated';
-    setTimeout(() => { btn.innerHTML = originalText; }, 2000);
-
-  } catch (err) {
-    errorEl.textContent = 'Network error while opening folder selector.';
-    errorEl.classList.remove('hidden');
-  } finally {
-    btn.disabled = false;
-    if (btn.innerHTML === '⏳ Opening folder selector…') {
-      btn.innerHTML = originalText;
-    }
-  }
-}
-
-/* ============================================================
-   Download
+   Download Handler
    ============================================================ */
 dom.downloadBtn.addEventListener('click', handleDownload);
 
@@ -504,6 +479,17 @@ async function handleDownload() {
   const audioOnly = quality === 'audio';
   const noplaylist = state.noplaylist;
   const downloadDir = state.settings.download_dir || '';
+  const platform = state.videoInfo.platform || 'youtube';
+  const mediaType = state.videoInfo.media_type || 'video';
+
+  let selectedItems = null;
+  if (state.videoInfo.is_carousel) {
+    selectedItems = Array.from(state.selectedCarouselItems);
+    if (selectedItems.length === 0) {
+      showDownloadError('Please select at least one item from the carousel.');
+      return;
+    }
+  }
 
   const info = state.videoInfo.is_playlist && !noplaylist
     ? state.videoInfo
@@ -515,7 +501,6 @@ async function handleDownload() {
   const durationStr = info.duration_str || '';
 
   dom.downloadBtn.disabled = true;
-  dom.downloadBtnIcon.textContent = '⟳';
   showProgress('preparing', 0, '', '');
 
   try {
@@ -532,6 +517,9 @@ async function handleDownload() {
         thumbnail,
         channel,
         duration_str: durationStr,
+        platform,
+        media_type: mediaType,
+        selected_items: selectedItems,
       }),
     });
 
@@ -539,7 +527,6 @@ async function handleDownload() {
 
     if (!data.success) {
       dom.downloadBtn.disabled = false;
-      dom.downloadBtnIcon.textContent = '⬇';
       hideProgress();
       showDownloadError(data.error || 'Failed to start download.');
       return;
@@ -554,22 +541,23 @@ async function handleDownload() {
       directory: downloadDir,
     };
 
-    // Start SSE progress stream
     startSSE(data.job_id, { title, quality, audioOnly, channel, durationStr });
 
   } catch (err) {
     dom.downloadBtn.disabled = false;
-    dom.downloadBtnIcon.textContent = '⬇';
     hideProgress();
     showDownloadError('Network error. Please try again.');
   }
 }
 
 /* ============================================================
-   SSE Progress
+   SSE Progress Tracking
    ============================================================ */
 function startSSE(jobId, meta) {
-  if (state.sseSource) { state.sseSource.close(); state.sseSource = null; }
+  if (state.sseSource) {
+    state.sseSource.close();
+    state.sseSource = null;
+  }
 
   const source = new EventSource(`/api/progress/${jobId}`);
   state.sseSource = source;
@@ -578,7 +566,7 @@ function startSSE(jobId, meta) {
     try {
       const ev = JSON.parse(e.data);
       handleProgressEvent(ev, meta);
-    } catch {/* ignore parse errors */}
+    } catch { /* ignore */ }
   };
 
   source.onerror = () => {
@@ -598,222 +586,179 @@ async function pollJobStatus(jobId, meta) {
   } catch { /* ignore */ }
 }
 
-const STAGE_LABELS = {
-  pending:           '⏳ Preparing download…',
-  preparing:         '⏳ Preparing download…',
-  downloading:       '⬇ Downloading…',
-  merging:           '⚙ Merging video + audio…',
-  extracting_audio:  '🎵 Extracting audio…',
-  cleaning:          '🧹 Cleaning temporary files…',
-  completed:         '✅ Download complete!',
-  failed:            '❌ Download failed.',
-};
-
 function handleProgressEvent(ev, meta) {
   const status = ev.status || ev.stage || '';
+  const pct = typeof ev.percentage === 'number' ? ev.percentage : 0;
+  const speed = ev.speed || '';
+  const eta = ev.eta || '';
 
-  if (status === 'downloading') {
-    showProgress('downloading', ev.percentage || 0, ev.speed || '', ev.eta || '');
-  } else if (status === 'merging' || status === 'extracting_audio') {
-    showProgress(status, 100, '', '');
-  } else if (status === 'cleaning') {
-    showProgress('cleaning', 100, '', '');
-  } else if (status === 'completed') {
-    showCompletionCard(ev, meta);
-  } else if (status === 'failed') {
+  if (status === 'completed') {
+    if (state.sseSource) { state.sseSource.close(); state.sseSource = null; }
     hideProgress();
     dom.downloadBtn.disabled = false;
-    dom.downloadBtnIcon.textContent = '⬇';
-    showDownloadError(ev.error || 'Download failed. Please try again.');
-    if (state.sseSource) { state.sseSource.close(); state.sseSource = null; }
+    showCompleteCard(ev, meta);
+    return;
   }
+
+  if (status === 'failed') {
+    if (state.sseSource) { state.sseSource.close(); state.sseSource = null; }
+    hideProgress();
+    dom.downloadBtn.disabled = false;
+    showDownloadError(ev.error || 'Download failed.');
+    return;
+  }
+
+  const stageLabels = {
+    pending: 'Queued…',
+    downloading: 'Downloading…',
+    merging: 'Merging audio and video streams…',
+    extracting_audio: 'Extracting MP3 audio track…',
+    cleaning: 'Finalizing files…',
+  };
+
+  showProgress(stageLabels[status] || 'Processing…', pct, speed, eta);
 }
 
-function showProgress(stage, pct, speed, eta) {
+function showProgress(stageText, pct, speed, eta) {
   dom.progressCard.classList.remove('hidden');
-  dom.completeCard.classList.add('hidden');
-
-  const label = STAGE_LABELS[stage] || `⟳ ${stage}…`;
-  dom.progressStageText.textContent = label;
-
-  const fillPct = Math.min(100, Math.max(0, pct));
-  dom.progressBarFill.style.width = fillPct + '%';
-  dom.progressBarWrap.setAttribute('aria-valuenow', fillPct);
-  dom.progressPct.textContent = fillPct.toFixed(0) + '%';
-  dom.progressSpeed.textContent = speed || '';
-  dom.progressEta.textContent = eta ? `ETA ${eta}` : '';
+  dom.progressStageText.textContent = stageText;
+  dom.progressBarFill.style.width = `${Math.min(100, Math.max(0, pct))}%`;
+  dom.progressPct.textContent = `${Math.round(pct)}%`;
+  dom.progressSpeed.textContent = speed;
+  dom.progressEta.textContent = eta;
 }
 
 function hideProgress() {
   dom.progressCard.classList.add('hidden');
 }
 
-function showCompletionCard(ev, meta) {
-  if (state.sseSource) { state.sseSource.close(); state.sseSource = null; }
-  dom.downloadBtn.disabled = false;
-  dom.downloadBtnIcon.textContent = '⬇';
-  hideProgress();
-
-  dom.completeTitle.textContent = meta.title || ev.filename || 'Your video';
-  dom.completeQuality.textContent = qualityLabel(meta.quality);
-  dom.completeFormat.textContent = meta.audioOnly ? 'MP3' : 'MP4';
-  dom.completeDir.textContent = ev.directory || state.settings.download_dir || './downloads';
-
+/* ============================================================
+   Complete Card & Actions
+   ============================================================ */
+function showCompleteCard(result, meta) {
   dom.completeCard.classList.remove('hidden');
+  dom.completeTitle.textContent = meta.title || result.filename || 'Downloaded media';
+  dom.completeQuality.textContent = meta.audioOnly ? 'MP3 Audio (192kbps)' : (meta.quality || 'Best Available');
+  dom.completeFormat.textContent = (result.filename ? result.filename.split('.').pop() : (meta.audioOnly ? 'mp3' : 'mp4')).toUpperCase();
+  dom.completeDir.textContent = result.directory || state.settings.download_dir || './downloads';
 
-  const jobId = state.currentJobId;
-  dom.openFileBtn.dataset.jobId = jobId;
-  dom.openFolderBtn.dataset.jobId = jobId;
-}
+  const entryId = state.currentJobId;
 
-dom.openFileBtn.addEventListener('click', () => {
-  const jobId = dom.openFileBtn.dataset.jobId;
-  if (!jobId) return;
-  fetch(`/api/open-file/${jobId}`, { method: 'POST' }).catch(() => {});
-});
+  dom.openFileBtn.onclick = async () => {
+    try {
+      await fetch(`/api/open-file/${entryId}`, { method: 'POST' });
+    } catch { /* ignore */ }
+  };
 
-dom.openFolderBtn.addEventListener('click', () => {
-  const jobId = dom.openFolderBtn.dataset.jobId;
-  if (!jobId) return;
-  fetch(`/api/open-folder/${jobId}`, { method: 'POST' }).catch(() => {});
-});
+  dom.openFolderBtn.onclick = async () => {
+    try {
+      await fetch(`/api/open-folder/${entryId}`, { method: 'POST' });
+    } catch { /* ignore */ }
+  };
 
-dom.downloadAnotherBtn.addEventListener('click', () => {
-  resetHomeForNew();
-});
-
-/* ============================================================
-   History page
-   ============================================================ */
-dom.refreshHistoryBtn.addEventListener('click', loadHistory);
-
-async function loadHistory() {
-  try {
-    const res = await fetch('/api/downloads');
-    const data = await res.json();
-    renderHistory(data.downloads || []);
-  } catch {
-    renderHistory([]);
-  }
-}
-
-function renderHistory(entries) {
-  if (!entries.length) {
-    dom.historyEmpty.classList.remove('hidden');
-    dom.historyTableWrap.classList.add('hidden');
-    return;
-  }
-
-  dom.historyEmpty.classList.add('hidden');
-  dom.historyTableWrap.classList.remove('hidden');
-
-  dom.historyBody.innerHTML = entries.map(e => `
-    <tr>
-      <td>
-        ${e.thumbnail
-          ? `<img class="history-thumb" src="${escHtml(e.thumbnail)}" alt="" loading="lazy" />`
-          : `<div class="history-thumb" style="background:var(--bg-tertiary);"></div>`
-        }
-      </td>
-      <td class="history-title">
-        <p title="${escHtml(e.title || '')}">${escHtml(truncate(e.title || 'Unknown', 48))}</p>
-        <small>${escHtml(e.channel || '')} ${e.duration_str ? '· ' + escHtml(e.duration_str) : ''}</small>
-      </td>
-      <td>
-        <span class="badge">${escHtml(qualityLabel(e.quality))} · ${escHtml(e.format || 'mp4').toUpperCase()}</span>
-      </td>
-      <td>
-        <span class="status-badge ${escHtml(e.status || 'pending')}">${escHtml(e.status || '—')}</span>
-      </td>
-      <td style="color:var(--text-muted); font-size:12px;">
-        ${e.completed_at ? formatDate(e.completed_at) : '—'}
-      </td>
-      <td class="history-actions">
-        ${e.status === 'completed' ? `
-          <button class="btn btn-ghost" data-action="open-file" data-id="${escHtml(e.id)}" title="Open file" aria-label="Open file">📂</button>
-          <button class="btn btn-ghost" data-action="open-folder" data-id="${escHtml(e.id)}" title="Open folder" aria-label="Open folder">🗂</button>
-        ` : ''}
-        <button class="btn btn-ghost" data-action="delete" data-id="${escHtml(e.id)}" title="Delete entry" aria-label="Delete history entry" style="color:var(--error);">🗑</button>
-      </td>
-    </tr>
-  `).join('');
-
-  dom.historyBody.querySelectorAll('[data-action]').forEach(btn => {
-    btn.addEventListener('click', handleHistoryAction);
-  });
-}
-
-async function handleHistoryAction(e) {
-  const btn = e.currentTarget;
-  const action = btn.dataset.action;
-  const id = btn.dataset.id;
-
-  if (action === 'open-file') {
-    await fetch(`/api/open-file/${id}`, { method: 'POST' });
-  } else if (action === 'open-folder') {
-    await fetch(`/api/open-folder/${id}`, { method: 'POST' });
-  } else if (action === 'delete') {
-    if (!confirm('Remove this entry from history?')) return;
-    const res = await fetch(`/api/downloads/${id}`, { method: 'DELETE' });
-    if ((await res.json()).success) loadHistory();
-  }
+  dom.downloadAnotherBtn.onclick = () => {
+    dom.completeCard.classList.add('hidden');
+    dom.urlInput.value = '';
+    dom.urlInput.focus();
+    hideAll();
+  };
 }
 
 /* ============================================================
-   Settings page
+   Folder Picker (Native Dialog)
    ============================================================ */
-async function loadSettings() {
-  try {
-    const res = await fetch('/api/settings');
-    const data = await res.json();
-    if (data.success) {
-      state.settings = data.settings;
-      applySettingsToUI(data.settings);
-    }
-  } catch { /* ignore */ }
-}
+dom.changeDownloadDir.addEventListener('click', () => openFolderPicker(dom.downloadDirDisplay, dom.downloadDirError));
+dom.settingsChangeDirBtn.addEventListener('click', () => openFolderPicker(dom.settingsDirDisplay, null));
 
-function applySettingsToUI(s) {
-  dom.settingsDirDisplay.textContent = s.download_dir || './downloads';
-  dom.settingsQuality.value = s.default_quality || 'best';
-  dom.settingsMaxConcurrent.value = String(s.max_concurrent || 2);
-  dom.settingsTheme.value = s.theme || 'dark';
-  applyTheme(s.theme || 'dark');
-}
-
-dom.settingsChangeDirBtn.addEventListener('click', async () => {
-  const btn = dom.settingsChangeDirBtn;
-  const originalText = btn.innerHTML;
-  btn.disabled = true;
-  btn.innerHTML = '⏳ Opening folder selector…';
-
+async function openFolderPicker(targetDisplay, targetError) {
   try {
     const res = await fetch('/api/select-folder');
     const data = await res.json();
+    if (data.success && data.directory) {
+      state.settings.download_dir = data.directory;
+      if (targetDisplay) targetDisplay.textContent = data.directory;
+      if (targetError) targetError.classList.add('hidden');
+    }
+  } catch (err) {
+    if (targetError) {
+      targetError.textContent = 'Could not open folder picker.';
+      targetError.classList.remove('hidden');
+    }
+  }
+}
 
-    if (data.cancelled) return;
+/* ============================================================
+   Download History
+   ============================================================ */
+if (dom.refreshHistoryBtn) {
+  dom.refreshHistoryBtn.addEventListener('click', loadDownloadHistory);
+}
 
-    if (!data.success) {
-      showSettingsFeedback(data.error || 'Unable to select folder.', 'error');
+async function loadDownloadHistory() {
+  try {
+    const res = await fetch('/api/downloads');
+    const data = await res.json();
+    const history = data.downloads || [];
+
+    if (history.length === 0) {
+      dom.historyEmpty.classList.remove('hidden');
+      dom.historyTableWrap.classList.add('hidden');
       return;
     }
 
-    state.settings.download_dir = data.directory;
-    dom.settingsDirDisplay.textContent = data.directory;
-    showSettingsFeedback('✓ Download folder updated: ' + data.directory, 'success');
-  } catch {
-    showSettingsFeedback('Network error while opening folder selector.', 'error');
-  } finally {
-    btn.disabled = false;
-    btn.innerHTML = originalText;
-  }
-});
+    dom.historyEmpty.classList.add('hidden');
+    dom.historyTableWrap.classList.remove('hidden');
+    dom.historyBody.innerHTML = '';
+
+    history.forEach(item => {
+      const tr = document.createElement('tr');
+      const dateStr = item.completed_at ? new Date(item.completed_at).toLocaleDateString() : '—';
+      const statusBadge = item.status === 'completed'
+        ? '<span class="badge" style="background:var(--success-bg); color:var(--success);">Completed</span>'
+        : '<span class="badge" style="background:var(--error-bg); color:var(--error);">Failed</span>';
+
+      tr.innerHTML = `
+        <td><img src="${escHtml(item.thumbnail || '')}" class="history-thumb" alt="" /></td>
+        <td style="font-weight:600; color:var(--text-primary); max-width:240px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escHtml(item.title || item.filename || 'Unknown')}</td>
+        <td><span class="badge">${escHtml((item.format || 'mp4').toUpperCase())}</span></td>
+        <td>${statusBadge}</td>
+        <td>${dateStr}</td>
+        <td>
+          <button class="btn btn-ghost" data-action="delete" data-id="${item.id}" style="font-size:11px; padding:4px 8px;">Delete</button>
+        </td>
+      `;
+
+      tr.querySelector('[data-action="delete"]').addEventListener('click', async () => {
+        await fetch(`/api/downloads/${item.id}`, { method: 'DELETE' });
+        loadDownloadHistory();
+      });
+
+      dom.historyBody.appendChild(tr);
+    });
+  } catch { /* ignore */ }
+}
+
+/* ============================================================
+   Settings Page
+   ============================================================ */
+async function loadSettingsUI() {
+  try {
+    const res = await fetch('/api/settings');
+    const data = await res.json();
+    state.settings = data.settings || {};
+
+    dom.settingsDirDisplay.textContent = state.settings.download_dir || './downloads';
+    dom.settingsQuality.value = state.settings.default_quality || 'best';
+    dom.settingsMaxConcurrent.value = state.settings.max_concurrent || 2;
+    dom.settingsTheme.value = state.settings.theme || 'light';
+  } catch { /* ignore */ }
+}
 
 dom.saveSettingsBtn.addEventListener('click', async () => {
   const payload = {
-    default_quality:  dom.settingsQuality.value,
-    max_concurrent:   parseInt(dom.settingsMaxConcurrent.value),
-    theme:            dom.settingsTheme.value,
+    default_quality: dom.settingsQuality.value,
+    max_concurrent: parseInt(dom.settingsMaxConcurrent.value, 10),
+    theme: dom.settingsTheme.value,
   };
 
   try {
@@ -826,26 +771,21 @@ dom.saveSettingsBtn.addEventListener('click', async () => {
     if (data.success) {
       state.settings = data.settings;
       applyTheme(data.settings.theme);
-      showSettingsFeedback('Settings saved successfully!', 'success');
-    } else {
-      showSettingsFeedback(data.error || 'Failed to save.', 'error');
+      showSettingsFeedback('Settings saved successfully.', 'success');
     }
   } catch {
-    showSettingsFeedback('Network error.', 'error');
+    showSettingsFeedback('Failed to save settings.', 'error');
   }
 });
 
-dom.settingsTheme.addEventListener('change', () => {
-  applyTheme(dom.settingsTheme.value);
-});
-
 dom.clearHistoryBtn.addEventListener('click', async () => {
-  if (!confirm('Clear all download history? This cannot be undone.')) return;
+  if (!confirm('Are you sure you want to clear all download history?')) return;
   try {
     const res = await fetch('/api/downloads');
     const data = await res.json();
-    const entries = data.downloads || [];
-    await Promise.all(entries.map(e => fetch(`/api/downloads/${e.id}`, { method: 'DELETE' })));
+    for (const item of (data.downloads || [])) {
+      await fetch(`/api/downloads/${item.id}`, { method: 'DELETE' });
+    }
     showSettingsFeedback('History cleared.', 'success');
   } catch {
     showSettingsFeedback('Failed to clear history.', 'error');
@@ -856,29 +796,49 @@ function showSettingsFeedback(msg, type) {
   dom.settingsFeedback.textContent = msg;
   dom.settingsFeedback.className = `alert alert-${type}`;
   dom.settingsFeedback.classList.remove('hidden');
-  setTimeout(() => dom.settingsFeedback.classList.add('hidden'), 4000);
+  setTimeout(() => dom.settingsFeedback.classList.add('hidden'), 3000);
 }
 
-/* ============================================================
-   Theme
-   ============================================================ */
 function applyTheme(theme) {
-  document.documentElement.setAttribute('data-theme', theme || 'dark');
+  document.documentElement.setAttribute('data-theme', theme || 'light');
 }
 
 /* ============================================================
-   UI helpers
+   Helpers
    ============================================================ */
+function hideAll() {
+  dom.playlistCard.classList.add('hidden');
+  dom.videoCard.classList.add('hidden');
+  dom.carouselCard.classList.add('hidden');
+  dom.downloadSection.classList.add('hidden');
+  dom.progressCard.classList.add('hidden');
+  dom.completeCard.classList.add('hidden');
+  dom.analyzeError.classList.add('hidden');
+  dom.downloadError.classList.add('hidden');
+}
+
 function setAnalyzeBtnLoading(loading) {
   dom.analyzeBtn.disabled = loading;
-  dom.analyzeBtnIcon.textContent = loading ? '⟳' : '🔍';
-  dom.analyzeBtnText.textContent = loading ? 'Analyzing…' : 'Analyze URL';
-  if (loading) dom.analyzeBtnIcon.style.animation = 'spin 1s linear infinite';
-  else dom.analyzeBtnIcon.style.animation = '';
+  if (loading) {
+    dom.analyzeBtnText.textContent = 'Analyzing…';
+    dom.analyzeBtnIcon.innerHTML = '<span class="spinner"></span>';
+  } else {
+    dom.analyzeBtnText.textContent = 'Analyze URL';
+    dom.analyzeBtnIcon.innerHTML = `
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="11" cy="11" r="8"></circle>
+        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+      </svg>
+    `;
+  }
 }
 
 function showAnalyzeError(msg) {
-  dom.analyzeError.textContent = msg;
+  if (dom.analyzeErrorText) {
+    dom.analyzeErrorText.textContent = msg;
+  } else {
+    dom.analyzeError.textContent = msg;
+  }
   dom.analyzeError.classList.remove('hidden');
 }
 
@@ -892,139 +852,39 @@ function showDownloadError(msg) {
 }
 
 function clearErrors() {
+  dom.analyzeError.classList.add('hidden');
   dom.downloadError.classList.add('hidden');
-  dom.downloadDirError.classList.add('hidden');
-}
-
-function hideAll() {
-  dom.playlistCard.classList.add('hidden');
-  dom.skeletonCard.classList.add('hidden');
-  dom.videoCard.classList.add('hidden');
-  if (dom.drmNoticeCard) dom.drmNoticeCard.classList.add('hidden');
-  dom.downloadSection.classList.add('hidden');
-  dom.progressCard.classList.add('hidden');
-  dom.completeCard.classList.add('hidden');
-  clearErrors();
-}
-
-function resetHomeForNew() {
-  if (state.sseSource) { state.sseSource.close(); state.sseSource = null; }
-  state.currentJobId = null;
-  state.videoInfo = null;
-  state.selectedQuality = 'best';
-  state.noplaylist = true;
-
-  dom.urlInput.value = '';
-  dom.radioSingle.checked = true;
-  dom.downloadBtn.disabled = false;
-  dom.downloadBtnIcon.textContent = '⬇';
-  setAnalyzeBtnLoading(false);
-  if (dom.detectionPill) dom.detectionPill.classList.add('hidden');
-  hideAll();
-  dom.urlInput.focus();
-}
-
-/* ============================================================
-   Supported Platforms Page
-   ============================================================ */
-async function loadPlatforms() {
-  if (!dom.platformsGrid) return;
-  try {
-    const res = await fetch('/api/platforms');
-    const data = await res.json();
-    if (data.success && data.platforms) {
-      renderPlatforms(data.platforms);
-    }
-  } catch (err) {
-    dom.platformsGrid.innerHTML = '<div class="alert alert-error">Unable to load platforms list.</div>';
-  }
-}
-
-function renderPlatforms(platforms) {
-  const statusStyles = {
-    SUPPORTED: { label: '✓ Supported', class: 'supported', bg: 'var(--success-bg)', color: '#4ade80' },
-    LIMITED: { label: '⚠ Limited / Extractor Dependent', class: 'limited', bg: 'var(--warning-bg)', color: '#fbbf24' },
-    DRM_PROTECTED: { label: '🔒 DRM Protected', class: 'drm', bg: 'var(--error-bg)', color: '#f87171' },
-    UNSUPPORTED: { label: '✕ Unsupported', class: 'unsupported', bg: 'rgba(255,255,255,0.05)', color: 'var(--text-muted)' },
-  };
-
-  dom.platformsGrid.innerHTML = platforms.map(p => {
-    const st = statusStyles[p.category] || statusStyles.UNSUPPORTED;
-    return `
-      <div class="platform-card">
-        <div class="platform-card-header">
-          <div class="platform-card-title">
-            <span>${p.name}</span>
-          </div>
-          <span class="platform-card-status" style="background:${st.bg}; color:${st.color};">
-            ${st.label}
-          </span>
-        </div>
-        <div class="platform-card-body">
-          ${escHtml(p.description)}
-        </div>
-      </div>
-    `;
-  }).join('');
-}
-
-function qualityLabel(q) {
-  const map = {
-    best:  'Best Available',
-    '2160': '4K Ultra HD (2160p)',
-    '1440': '2K Quad HD (1440p)',
-    '1080': 'Full HD (1080p)',
-    '720':  'HD (720p)',
-    '480':  'SD (480p)',
-    '360':  '360p',
-    '240':  '240p',
-    '144':  '144p',
-    audio:  'Audio Only (MP3)',
-  };
-  return map[q] || q || 'Unknown';
 }
 
 function formatViews(n) {
-  if (n >= 1e9) return (n / 1e9).toFixed(1) + 'B views';
-  if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M views';
-  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K views';
-  return n + ' views';
-}
-
-function formatDate(iso) {
-  try {
-    return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-  } catch { return iso; }
-}
-
-function truncate(str, n) {
-  return str.length > n ? str.slice(0, n) + '…' : str;
+  if (!n) return '';
+  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B views`;
+  if (n >= 1_000_000)     return `${(n / 1_000_000).toFixed(1)}M views`;
+  if (n >= 1_000)         return `${(n / 1_000).toFixed(1)}K views`;
+  return `${n} views`;
 }
 
 function escHtml(str) {
+  if (!str) return '';
   return String(str)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+    .replace(/"/g, '&quot;');
 }
 
 /* ============================================================
    Init
    ============================================================ */
-async function init() {
+(async function init() {
+  checkFfmpeg();
   try {
     const res = await fetch('/api/settings');
     const data = await res.json();
-    if (data.success) {
-      state.settings = data.settings;
-      applyTheme(data.settings.theme);
+    state.settings = data.settings || {};
+    applyTheme(state.settings.theme || 'light');
+    if (dom.downloadDirDisplay) {
+      dom.downloadDirDisplay.textContent = state.settings.download_dir || './downloads';
     }
   } catch { /* ignore */ }
-
-  checkFfmpeg();
-  dom.urlInput.focus();
-}
-
-init();
+})();
