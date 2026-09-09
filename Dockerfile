@@ -5,9 +5,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PORT=5000
 
-# Install FFmpeg and system dependencies
+# Install FFmpeg, Node.js and system dependencies
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ffmpeg curl && \
+    apt-get install -y --no-install-recommends ffmpeg curl nodejs && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 

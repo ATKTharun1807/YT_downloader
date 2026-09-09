@@ -277,10 +277,20 @@ def _build_base_opts(noplaylist: bool = True) -> dict:
         "file_access_retries": 5,
         "socket_timeout": 30,
         "buffersize": 1024 * 1024,     # 1MB buffer
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["android", "ios", "mweb", "web"],
+                "player_skip": ["configs"],
+            }
+        },
+        "http_headers": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+            "Accept-Language": "en-US,en;q=0.9",
+        },
     }
 
     # Node.js for PO token / JavaScript challenges
-    node_path = shutil.which("node")
+    node_path = shutil.which("node") or shutil.which("nodejs")
     if node_path:
         opts["js_runtimes"] = {"node": {"path": node_path}}
         opts["remote_components"] = ["ejs:github"]
@@ -304,29 +314,40 @@ def get_video_info(url: str, noplaylist: bool = True) -> dict:
     Returns a structured dict suitable for JSON serialization.
     Raises MediaExtractionError on failure.
     """
-    opts = {
-        **_build_base_opts(noplaylist=noplaylist),
-        "quiet": True,
-        "no_warnings": True,
-        "format": "all/best",
-        "socket_timeout": 10,
-        "retries": 2,
-    }
+    client_strategies = [
+        ["android", "ios", "mweb", "web"],
+        ["ios", "android"],
+        ["android"],
+    ]
 
     raw = None
-    max_retries = 2
     last_err = None
 
-    for attempt in range(max_retries):
+    for attempt, clients in enumerate(client_strategies):
+        opts = {
+            **_build_base_opts(noplaylist=noplaylist),
+            "quiet": True,
+            "no_warnings": True,
+            "format": "all/best",
+            "socket_timeout": 15,
+            "retries": 3,
+            "extractor_args": {
+                "youtube": {
+                    "player_client": clients,
+                    "player_skip": ["configs"],
+                }
+            },
+        }
+
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 raw = ydl.extract_info(url, download=False)
-            break
+            if raw:
+                break
         except Exception as e:
             last_err = e
-            logger.warning("Extraction attempt %d failed for %s: %s", attempt + 1, url, e)
-            if attempt < max_retries - 1:
-                time.sleep(1.0)
+            logger.warning("Extraction strategy %d (%s) failed for %s: %s", attempt + 1, clients, url, e)
+            time.sleep(0.5)
 
     if raw is None:
         raise categorize_extraction_error(last_err or Exception("Could not retrieve media details"))
