@@ -3,7 +3,9 @@
  *
  * Handles:
  *  - SPA navigation (sidebar + mobile nav)
+ *  - Multi-platform live auto-detection (YouTube, JioHotstar, Netflix, Prime Video)
  *  - URL analysis (POST /api/analyze)
+ *  - Platform support & DRM disclosures (GET /api/platforms)
  *  - Quality selection
  *  - Playlist single/full choice
  *  - Download initiation (POST /api/download)
@@ -46,6 +48,21 @@ const dom = {
   analyzeBtnText:    $('analyzeBtnText'),
   analyzeBtnIcon:    $('analyzeBtnIcon'),
   analyzeError:      $('analyzeError'),
+  inputCardTitle:    $('inputCardTitle'),
+
+  // Platform Selector & Detection
+  platformStrip:     $('platformStrip'),
+  platformTabs:      document.querySelectorAll('.platform-tab'),
+  detectionPill:     $('detectionPill'),
+  detectionDot:      $('detectionDot'),
+  detectionText:     $('detectionText'),
+
+  // DRM Notice Card
+  drmNoticeCard:            $('drmNoticeCard'),
+  drmCardTitle:             $('drmCardTitle'),
+  drmCardMessage:           $('drmCardMessage'),
+  openExternalPlatformBtn:  $('openExternalPlatformBtn'),
+  openExternalPlatformText: $('openExternalPlatformText'),
 
   playlistCard:      $('playlistCard'),
   playlistCount:     $('playlistCount'),
@@ -67,7 +84,11 @@ const dom = {
   downloadDirError:  $('downloadDirError'),
   downloadBtn:       $('downloadBtn'),
   downloadBtnIcon:   $('downloadBtnIcon'),
+  downloadBtnText:   $('downloadBtnText'),
   downloadError:     $('downloadError'),
+
+  // Platforms Page
+  platformsGrid:     $('platformsGrid'),
 
   progressCard:      $('progressCard'),
   progressStageText: $('progressStageText'),
@@ -127,6 +148,7 @@ function navigateTo(page) {
   });
 
   // Page-specific init
+  if (page === 'platforms') loadPlatforms();
   if (page === 'downloads') loadHistory();
   if (page === 'settings') loadSettings();
 }
@@ -137,6 +159,81 @@ document.querySelectorAll('[data-page]').forEach(el => {
     navigateTo(el.dataset.page);
   });
 });
+
+/* ============================================================
+   Platform Auto-Detection (Client-Side Immediate)
+   ============================================================ */
+function detectClientPlatform(url) {
+  if (!url) return null;
+  const lower = url.toLowerCase();
+  if (lower.includes('youtube.com') || lower.includes('youtu.be')) {
+    return { id: 'youtube', name: 'YouTube', status: 'supported', text: '✓ YouTube detected' };
+  }
+  if (lower.includes('hotstar.com') || lower.includes('jiostar.com') || lower.includes('jiohotstar.com')) {
+    return { id: 'jiohotstar', name: 'JioHotstar', status: 'limited', text: '✓ JioHotstar detected' };
+  }
+  if (lower.includes('netflix.com')) {
+    return { id: 'netflix', name: 'Netflix', status: 'drm', text: '🔒 Netflix — DRM protected' };
+  }
+  if (lower.includes('primevideo.com') || (lower.includes('amazon.') && (lower.includes('/video') || lower.includes('/gp/video')))) {
+    return { id: 'primevideo', name: 'Prime Video', status: 'drm', text: '🔒 Prime Video — DRM protected' };
+  }
+  return null;
+}
+
+function updatePlatformUIFromInput() {
+  const url = dom.urlInput.value.trim();
+  const detection = detectClientPlatform(url);
+
+  if (!detection) {
+    if (dom.detectionPill) {
+      dom.detectionPill.classList.add('hidden');
+      dom.detectionPill.className = 'detection-pill hidden';
+    }
+    return;
+  }
+
+  // Update tabs
+  highlightPlatformTab(detection.id);
+
+  // Update pill
+  if (dom.detectionPill) {
+    dom.detectionPill.className = `detection-pill ${detection.status}`;
+    dom.detectionText.textContent = detection.text;
+    dom.detectionPill.classList.remove('hidden');
+  }
+}
+
+function highlightPlatformTab(platformId) {
+  if (!dom.platformTabs) return;
+  dom.platformTabs.forEach(tab => {
+    tab.classList.toggle('active', tab.dataset.platform === platformId);
+  });
+}
+
+// Event listeners for URL typing/pasting
+dom.urlInput.addEventListener('input', updatePlatformUIFromInput);
+dom.urlInput.addEventListener('paste', () => {
+  setTimeout(updatePlatformUIFromInput, 50);
+});
+
+// Platform tab clicks: prompt user with placeholder hint
+if (dom.platformTabs) {
+  dom.platformTabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      const platform = tab.dataset.platform;
+      highlightPlatformTab(platform);
+      const placeholders = {
+        youtube: 'https://www.youtube.com/watch?v=...',
+        jiohotstar: 'https://www.hotstar.com/...',
+        netflix: 'https://www.netflix.com/title/...',
+        primevideo: 'https://www.primevideo.com/detail/...',
+      };
+      dom.urlInput.placeholder = placeholders[platform] || 'Paste media URL...';
+      dom.urlInput.focus();
+    });
+  });
+}
 
 /* ============================================================
    FFmpeg status
@@ -160,7 +257,7 @@ dom.urlInput.addEventListener('keydown', e => { if (e.key === 'Enter') handleAna
 
 async function handleAnalyze() {
   const url = dom.urlInput.value.trim();
-  if (!url) { showAnalyzeError('Please enter a YouTube URL.'); return; }
+  if (!url) { showAnalyzeError('Please enter a media URL.'); return; }
 
   // UI: analyzing state
   hideAll();
@@ -177,29 +274,37 @@ async function handleAnalyze() {
 
     const data = await res.json();
 
+    dom.skeletonCard.classList.add('hidden');
+    setAnalyzeBtnLoading(false);
+
     if (!data.success) {
-      dom.skeletonCard.classList.add('hidden');
-      setAnalyzeBtnLoading(false);
-      showAnalyzeError(data.error || 'Failed to analyze video.');
+      showAnalyzeError(data.error || 'Failed to analyze URL.');
       return;
     }
 
     state.videoInfo = data;
     state.noplaylist = true;
 
-    dom.skeletonCard.classList.add('hidden');
-    setAnalyzeBtnLoading(false);
+    // Synchronize active platform tab
+    if (data.platform) {
+      highlightPlatformTab(data.platform);
+    }
 
+    // 1. Check if platform or stream is DRM Protected
+    if (data.status === 'DRM_PROTECTED' || !data.can_download) {
+      showDrmNotice(data);
+      return;
+    }
+
+    // 2. Playlists
     if (data.is_mixed && data.has_playlist) {
       dom.playlistCount.textContent = `${data.playlist_count || '?'} videos`;
       dom.playlistCard.classList.remove('hidden');
     }
 
     if (data.is_playlist && !data.is_mixed) {
-      // Pure playlist URL
       dom.playlistCount.textContent = `${data.playlist_count || '?'} videos`;
       dom.playlistCard.classList.remove('hidden');
-      // Show playlist thumbnail/title if available
       renderPlaylistInfo(data);
     } else {
       renderVideoInfo(data);
@@ -210,6 +315,15 @@ async function handleAnalyze() {
     setAnalyzeBtnLoading(false);
     showAnalyzeError('Network error. Please check your connection.');
   }
+}
+
+function showDrmNotice(data) {
+  if (!dom.drmNoticeCard) return;
+  dom.drmCardTitle.textContent = `${data.platform_name || 'Platform'} Content is Protected`;
+  dom.drmCardMessage.textContent = data.message || 'This content is DRM protected and cannot be downloaded by this application.';
+  dom.openExternalPlatformBtn.href = data.external_url || data.url || '#';
+  dom.openExternalPlatformText.textContent = `Open on ${data.platform_name || 'Platform'}`;
+  dom.drmNoticeCard.classList.remove('hidden');
 }
 
 // Playlist radio: re-analyze when user changes choice
@@ -246,6 +360,17 @@ function renderVideoInfo(data) {
   // Quality grid
   buildQualityGrid(info.quality_options || []);
 
+  // Dynamic Download CTA based on platform
+  if (dom.downloadBtnText) {
+    if (data.platform === 'youtube') {
+      dom.downloadBtnText.textContent = '↓ Download 4K / MP4 Video';
+    } else if (data.platform === 'jiohotstar') {
+      dom.downloadBtnText.textContent = '↓ Download JioHotstar Video';
+    } else {
+      dom.downloadBtnText.textContent = '↓ Download Video';
+    }
+  }
+
   dom.videoCard.classList.remove('hidden');
   dom.downloadSection.classList.remove('hidden');
 
@@ -254,7 +379,6 @@ function renderVideoInfo(data) {
 }
 
 function renderPlaylistInfo(data) {
-  // For playlist, show summary card
   dom.videoThumbnail.src = data.thumbnail || (data.entries?.[0]?.thumbnail || '');
   dom.videoTitle.textContent = data.playlist_title || 'Playlist';
   dom.videoChannel.textContent = data.uploader ? `📺 ${data.uploader}` : '';
@@ -269,6 +393,10 @@ function renderPlaylistInfo(data) {
     { value: '480',  label: 'SD (480p)',        description: 'MP4 video' },
     { value: 'audio',label: 'Audio Only — MP3 192kbps', description: 'Extract audio' },
   ]);
+
+  if (dom.downloadBtnText) {
+    dom.downloadBtnText.textContent = '↓ Download Entire Playlist';
+  }
 
   dom.videoCard.classList.remove('hidden');
   dom.downloadSection.classList.remove('hidden');
@@ -322,15 +450,12 @@ function selectQuality(value) {
 dom.changeDownloadDir.addEventListener('click', openFolderPicker);
 
 async function openFolderPicker(targetDirDisplay, targetErrorEl) {
-  // targetDirDisplay and targetErrorEl are optional DOM refs;
-  // defaults to the Home page elements.
   const dirDisplay = (targetDirDisplay instanceof HTMLElement) ? targetDirDisplay : dom.downloadDirDisplay;
   const errorEl    = (targetErrorEl   instanceof HTMLElement) ? targetErrorEl   : dom.downloadDirError;
 
   const btn = dom.changeDownloadDir;
   const originalText = btn.innerHTML;
 
-  // Loading state
   btn.disabled = true;
   btn.innerHTML = '⏳ Opening folder selector…';
   errorEl.classList.add('hidden');
@@ -339,10 +464,7 @@ async function openFolderPicker(targetDirDisplay, targetErrorEl) {
     const res = await fetch('/api/select-folder');
     const data = await res.json();
 
-    if (data.cancelled) {
-      // User closed the dialog — keep existing directory, no error
-      return;
-    }
+    if (data.cancelled) return;
 
     if (!data.success) {
       errorEl.textContent = data.error || 'Unable to select download folder.';
@@ -350,12 +472,10 @@ async function openFolderPicker(targetDirDisplay, targetErrorEl) {
       return;
     }
 
-    // Update displayed path
     const newDir = data.directory;
     state.settings.download_dir = newDir;
     dirDisplay.textContent = newDir;
 
-    // Brief success feedback on the button
     btn.innerHTML = '✅ Location updated';
     setTimeout(() => { btn.innerHTML = originalText; }, 2000);
 
@@ -364,7 +484,6 @@ async function openFolderPicker(targetDirDisplay, targetErrorEl) {
     errorEl.classList.remove('hidden');
   } finally {
     btn.disabled = false;
-    // Restore button text if not already done via the success path
     if (btn.innerHTML === '⏳ Opening folder selector…') {
       btn.innerHTML = originalText;
     }
@@ -386,7 +505,6 @@ async function handleDownload() {
   const noplaylist = state.noplaylist;
   const downloadDir = state.settings.download_dir || '';
 
-  // Get metadata for the job
   const info = state.videoInfo.is_playlist && !noplaylist
     ? state.videoInfo
     : (state.videoInfo.is_playlist ? (state.videoInfo.entries?.[0] || state.videoInfo) : state.videoInfo);
@@ -396,7 +514,6 @@ async function handleDownload() {
   const channel = info.channel || info.uploader || '';
   const durationStr = info.duration_str || '';
 
-  // UI
   dom.downloadBtn.disabled = true;
   dom.downloadBtnIcon.textContent = '⟳';
   showProgress('preparing', 0, '', '');
@@ -452,7 +569,6 @@ async function handleDownload() {
    SSE Progress
    ============================================================ */
 function startSSE(jobId, meta) {
-  // Close any existing SSE
   if (state.sseSource) { state.sseSource.close(); state.sseSource = null; }
 
   const source = new EventSource(`/api/progress/${jobId}`);
@@ -468,9 +584,7 @@ function startSSE(jobId, meta) {
   source.onerror = () => {
     source.close();
     state.sseSource = null;
-    // If job already completed we'll be fine; if not show error
     if (state.currentJobId === jobId) {
-      // Poll once as fallback
       pollJobStatus(jobId, meta);
     }
   };
@@ -547,7 +661,6 @@ function showCompletionCard(ev, meta) {
 
   dom.completeCard.classList.remove('hidden');
 
-  // Store job ID on buttons
   const jobId = state.currentJobId;
   dom.openFileBtn.dataset.jobId = jobId;
   dom.openFolderBtn.dataset.jobId = jobId;
@@ -625,7 +738,6 @@ function renderHistory(entries) {
     </tr>
   `).join('');
 
-  // Attach event listeners to action buttons
   dom.historyBody.querySelectorAll('[data-action]').forEach(btn => {
     btn.addEventListener('click', handleHistoryAction);
   });
@@ -760,7 +872,7 @@ function applyTheme(theme) {
 function setAnalyzeBtnLoading(loading) {
   dom.analyzeBtn.disabled = loading;
   dom.analyzeBtnIcon.textContent = loading ? '⟳' : '🔍';
-  dom.analyzeBtnText.textContent = loading ? 'Analyzing…' : 'Analyze Video';
+  dom.analyzeBtnText.textContent = loading ? 'Analyzing…' : 'Analyze URL';
   if (loading) dom.analyzeBtnIcon.style.animation = 'spin 1s linear infinite';
   else dom.analyzeBtnIcon.style.animation = '';
 }
@@ -788,6 +900,7 @@ function hideAll() {
   dom.playlistCard.classList.add('hidden');
   dom.skeletonCard.classList.add('hidden');
   dom.videoCard.classList.add('hidden');
+  if (dom.drmNoticeCard) dom.drmNoticeCard.classList.add('hidden');
   dom.downloadSection.classList.add('hidden');
   dom.progressCard.classList.add('hidden');
   dom.completeCard.classList.add('hidden');
@@ -806,8 +919,53 @@ function resetHomeForNew() {
   dom.downloadBtn.disabled = false;
   dom.downloadBtnIcon.textContent = '⬇';
   setAnalyzeBtnLoading(false);
+  if (dom.detectionPill) dom.detectionPill.classList.add('hidden');
   hideAll();
   dom.urlInput.focus();
+}
+
+/* ============================================================
+   Supported Platforms Page
+   ============================================================ */
+async function loadPlatforms() {
+  if (!dom.platformsGrid) return;
+  try {
+    const res = await fetch('/api/platforms');
+    const data = await res.json();
+    if (data.success && data.platforms) {
+      renderPlatforms(data.platforms);
+    }
+  } catch (err) {
+    dom.platformsGrid.innerHTML = '<div class="alert alert-error">Unable to load platforms list.</div>';
+  }
+}
+
+function renderPlatforms(platforms) {
+  const statusStyles = {
+    SUPPORTED: { label: '✓ Supported', class: 'supported', bg: 'var(--success-bg)', color: '#4ade80' },
+    LIMITED: { label: '⚠ Limited / Extractor Dependent', class: 'limited', bg: 'var(--warning-bg)', color: '#fbbf24' },
+    DRM_PROTECTED: { label: '🔒 DRM Protected', class: 'drm', bg: 'var(--error-bg)', color: '#f87171' },
+    UNSUPPORTED: { label: '✕ Unsupported', class: 'unsupported', bg: 'rgba(255,255,255,0.05)', color: 'var(--text-muted)' },
+  };
+
+  dom.platformsGrid.innerHTML = platforms.map(p => {
+    const st = statusStyles[p.category] || statusStyles.UNSUPPORTED;
+    return `
+      <div class="platform-card">
+        <div class="platform-card-header">
+          <div class="platform-card-title">
+            <span>${p.name}</span>
+          </div>
+          <span class="platform-card-status" style="background:${st.bg}; color:${st.color};">
+            ${st.label}
+          </span>
+        </div>
+        <div class="platform-card-body">
+          ${escHtml(p.description)}
+        </div>
+      </div>
+    `;
+  }).join('');
 }
 
 function qualityLabel(q) {
@@ -856,7 +1014,6 @@ function escHtml(str) {
    Init
    ============================================================ */
 async function init() {
-  // Load settings first (need default_quality, theme)
   try {
     const res = await fetch('/api/settings');
     const data = await res.json();

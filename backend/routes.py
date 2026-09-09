@@ -260,10 +260,21 @@ async def start_download(request: Request, body: DownloadRequest):
     if not raw_url:
         return _safe_error("No URL provided.")
 
-    valid, result = validate_youtube_url(raw_url)
+    valid, result, platform_info = sanitize_and_validate_url(raw_url)
     if not valid:
         return _safe_error(result)
     clean_url = result
+
+    # Strict DRM & download eligibility check:
+    # Netflix, Prime Video, and DRM-protected streams can NEVER be downloaded.
+    if platform_info["status"] == STATUS_DRM_PROTECTED:
+        return _safe_error(
+            f"{platform_info['name']} content is DRM protected and cannot be downloaded by this application.",
+            status_code=400,
+        )
+
+    if platform_info["status"] == STATUS_UNSUPPORTED:
+        return _safe_error("This platform is not supported for downloading.", status_code=400)
 
     # Strip playlist params if single video requested
     if noplaylist and is_mixed_url(clean_url):
