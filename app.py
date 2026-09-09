@@ -144,18 +144,22 @@ async def generic_exception_handler(request: Request, exc: Exception):
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    host = os.environ.get("HOST", "0.0.0.0" if os.environ.get("PORT") else "127.0.0.1")
+
     print("\n" + "=" * 60)
     print("   YT_DOWNLOADER — Secure YouTube Downloader (FastAPI)")
     print("=" * 60)
-    print("   Running at: http://127.0.0.1:5000")
-    print("   Swagger Docs: http://127.0.0.1:5000/docs")
+    print(f"   Running at: http://{host}:{port}")
+    print(f"   Swagger Docs: http://{host}:{port}/docs")
     print("   Press Ctrl+C to stop.")
     print("=" * 60 + "\n")
 
     uvicorn.run(
         "app:app",
-        host="127.0.0.1",
-        port=5000,
+        host=host,
+        port=port,
         log_level="info",
         reload=False,
     )
+
