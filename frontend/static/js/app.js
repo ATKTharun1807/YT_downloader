@@ -92,6 +92,7 @@ const dom = {
   completeQuality:   $('completeQuality'),
   completeFormat:    $('completeFormat'),
   completeDir:       $('completeDir'),
+  saveToDeviceBtn:   $('saveToDeviceBtn'),
   openFileBtn:       $('openFileBtn'),
   openFolderBtn:     $('openFolderBtn'),
   downloadAnotherBtn:$('downloadAnotherBtn'),
@@ -702,6 +703,22 @@ function showCompleteCard(result, meta) {
   dom.completeDir.textContent = result.directory || meta.directory || state.settings.download_dir || './downloads';
 
   const entryId = state.currentJobId;
+  const downloadUrl = `/api/download-file/${entryId}`;
+
+  if (dom.saveToDeviceBtn) {
+    dom.saveToDeviceBtn.href = downloadUrl;
+    dom.saveToDeviceBtn.download = result.filename || '';
+  }
+
+  // Auto trigger download to user's browser
+  try {
+    const autoLink = document.createElement('a');
+    autoLink.href = downloadUrl;
+    autoLink.download = result.filename || '';
+    document.body.appendChild(autoLink);
+    autoLink.click();
+    document.body.removeChild(autoLink);
+  } catch { /* ignore */ }
 
   dom.openFileBtn.onclick = async () => {
     try {
@@ -777,6 +794,10 @@ async function loadDownloadHistory() {
         ? '<span class="badge" style="background:var(--success-bg); color:var(--success);">Completed</span>'
         : '<span class="badge" style="background:var(--error-bg); color:var(--error);">Failed</span>';
 
+      const actionBtn = item.status === 'completed'
+        ? `<a href="/api/download-file/${item.id}" download class="btn btn-primary" style="font-size:11px; padding:4px 8px; text-decoration:none; margin-right:4px;">⬇ Save</a>`
+        : '';
+
       tr.innerHTML = `
         <td><img src="${escHtml(item.thumbnail || '')}" class="history-thumb" alt="" /></td>
         <td style="font-weight:600; color:var(--text-primary); max-width:240px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escHtml(item.title || item.filename || 'Unknown')}</td>
@@ -784,6 +805,7 @@ async function loadDownloadHistory() {
         <td>${statusBadge}</td>
         <td>${dateStr}</td>
         <td>
+          ${actionBtn}
           <button class="btn btn-ghost" data-action="delete" data-id="${item.id}" style="font-size:11px; padding:4px 8px;">Delete</button>
         </td>
       `;

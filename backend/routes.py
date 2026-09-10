@@ -25,7 +25,7 @@ import sys
 from typing import AsyncGenerator
 
 from fastapi import APIRouter, Request, status
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 
 from backend.downloader import (
     get_ffmpeg_path,
@@ -453,12 +453,47 @@ async def open_folder(entry_id: str):
         resolved = get_safe_download_root()
 
     try:
-        subprocess.Popen(["explorer.exe", resolved])
+        if sys.platform == "win32":
+            subprocess.Popen(["explorer.exe", resolved])
+        else:
+            return {"success": True, "message": "Server-side directory: " + resolved}
     except Exception as e:
         logger.error("open-folder error: %s", e)
         return _safe_error("Could not open folder.")
 
     return {"success": True}
+
+
+# ---------------------------------------------------------------------------
+# /api/download-file/{entry_id}  — Stream file to client browser
+# ---------------------------------------------------------------------------
+
+@router.get("/download-file/{entry_id}")
+async def download_file(entry_id: str):
+    """Download the completed media file directly to the client browser."""
+    job = job_manager.get_job(entry_id)
+    file_path = None
+    filename = None
+
+    if job and job.status == "completed" and job.result:
+        file_path = job.result.get("file")
+        filename = job.result.get("filename")
+
+    if not file_path or not os.path.exists(file_path):
+        history = load_history()
+        entry = next((e for e in history if e.get("id") == entry_id), None)
+        if entry:
+            file_path = entry.get("file_path")
+            filename = entry.get("filename")
+
+    if not file_path or not os.path.exists(file_path):
+        return _safe_error("File not found or has been cleaned up from server.", status_code=404)
+
+    return FileResponse(
+        path=file_path,
+        filename=filename or os.path.basename(file_path),
+        media_type="application/octet-stream"
+    )
 
 
 # ---------------------------------------------------------------------------

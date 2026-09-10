@@ -146,6 +146,11 @@ def categorize_extraction_error(e: Exception) -> MediaExtractionError:
             "FFmpeg is required for processing this media. Please install FFmpeg.",
             code="FFMPEG_REQUIRED"
         )
+    if "failed to extract any player response" in msg or "player response" in msg:
+        return MediaExtractionError(
+            "YouTube extraction is temporarily unavailable. Please try again in a moment.",
+            code="PLAYER_RESPONSE_ERROR"
+        )
     
     # Strip yt-dlp issue template fluff from user-facing error message
     clean = raw_str
@@ -289,10 +294,17 @@ def _build_base_opts(noplaylist: bool = True) -> dict:
         },
     }
 
-    # Node.js for PO token / JavaScript challenges
+    # Discover JavaScript runtimes for YouTube extraction (Deno preferred, Node fallback)
+    js_runtimes = {}
+    deno_path = shutil.which("deno")
+    if deno_path:
+        js_runtimes["deno"] = {"path": deno_path}
     node_path = shutil.which("node") or shutil.which("nodejs")
     if node_path:
-        opts["js_runtimes"] = {"node": {"path": node_path}}
+        js_runtimes["node"] = {"path": node_path}
+
+    if js_runtimes:
+        opts["js_runtimes"] = js_runtimes
         opts["remote_components"] = ["ejs:github"]
 
     ffmpeg_path = get_ffmpeg_path()

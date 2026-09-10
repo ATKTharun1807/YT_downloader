@@ -41,22 +41,66 @@ logging.basicConfig(
 logger = logging.getLogger("yt_downloader")
 
 
+def log_startup_diagnostics():
+    """Log environment and tool versions for reliable deployment debugging without exposing secrets."""
+    import shutil
+    import subprocess
+    import sys
+    try:
+        import yt_dlp
+        y_ver = getattr(yt_dlp.version, "__version__", "unknown")
+    except Exception as e:
+        y_ver = f"error: {e}"
+
+    try:
+        import yt_dlp_ejs
+        ejs_ver = getattr(yt_dlp_ejs, "__version__", getattr(yt_dlp_ejs, "version", "installed"))
+    except Exception as e:
+        ejs_ver = f"not installed ({e})"
+
+    deno_ver = "not found"
+    deno_path = shutil.which("deno")
+    if deno_path:
+        try:
+            deno_ver = subprocess.check_output([deno_path, "--version"], text=True).splitlines()[0]
+        except Exception as e:
+            deno_ver = f"found at {deno_path} but error: {e}"
+
+    from backend.downloader import get_ffmpeg_path
+    ffmpeg_ver = "not found"
+    ffmpeg_path = get_ffmpeg_path()
+    if ffmpeg_path:
+        try:
+            ffmpeg_ver = subprocess.check_output([ffmpeg_path, "-version"], text=True).splitlines()[0]
+        except Exception as e:
+            ffmpeg_ver = f"found at {ffmpeg_path} (check failed: {e})"
+
+    js_runtimes_detected = []
+    try:
+        ydl = yt_dlp.YoutubeDL()
+        if hasattr(ydl, "_js_runtimes"):
+            js_runtimes_detected = list(ydl._js_runtimes.keys())
+    except Exception:
+        pass
+
+    logger.info("================ STARTUP DIAGNOSTICS ================")
+    logger.info("Python version      : %s", sys.version.replace("\n", " "))
+    logger.info("yt-dlp version      : %s", y_ver)
+    logger.info("yt-dlp-ejs version  : %s", ejs_ver)
+    logger.info("Deno version        : %s", deno_ver)
+    logger.info("FFmpeg version      : %s", ffmpeg_ver)
+    logger.info("yt-dlp JS runtimes  : %s", js_runtimes_detected)
+    logger.info("=====================================================")
+
+
 # ---------------------------------------------------------------------------
 # Lifespan context manager
 # ---------------------------------------------------------------------------
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: Check FFmpeg
-    from backend.downloader import get_ffmpeg_path
-    ffmpeg = get_ffmpeg_path()
-    if ffmpeg:
-        logger.info("FFmpeg detected: %s", ffmpeg)
-    else:
-        logger.warning(
-            "FFmpeg NOT found. Video+audio merging will not work. "
-            "Install FFmpeg and ensure it is on your PATH."
-        )
+    # Startup: Run diagnostics
+    log_startup_diagnostics()
     yield
     # Shutdown logic if needed
     logger.info("Shutting down YT_DOWNLOADER server.")
