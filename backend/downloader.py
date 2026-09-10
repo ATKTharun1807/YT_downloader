@@ -305,7 +305,6 @@ def _build_base_opts(noplaylist: bool = True) -> dict:
 
     if js_runtimes:
         opts["js_runtimes"] = js_runtimes
-        opts["remote_components"] = ["ejs:github"]
 
     ffmpeg_path = get_ffmpeg_path()
     if ffmpeg_path:
@@ -327,9 +326,8 @@ def get_video_info(url: str, noplaylist: bool = True) -> dict:
     Raises MediaExtractionError on failure.
     """
     client_strategies = [
-        ["ios", "android", "mweb"],
-        ["android", "ios"],
-        ["mweb", "web"],
+        ["ios", "android", "mweb", "web"],
+        ["android", "web"],
     ]
 
     raw = None
@@ -341,8 +339,8 @@ def get_video_info(url: str, noplaylist: bool = True) -> dict:
             "quiet": True,
             "no_warnings": True,
             "format": "all/best",
-            "socket_timeout": 15,
-            "retries": 3,
+            "socket_timeout": 8,
+            "retries": 1,
             "extractor_args": {
                 "youtube": {
                     "player_client": clients,
@@ -359,7 +357,6 @@ def get_video_info(url: str, noplaylist: bool = True) -> dict:
         except Exception as e:
             last_err = e
             logger.warning("Extraction strategy %d (%s) failed for %s: %s", attempt + 1, clients, url, e)
-            time.sleep(0.5)
 
     if raw is None:
         raise categorize_extraction_error(last_err or Exception("Could not retrieve media details"))

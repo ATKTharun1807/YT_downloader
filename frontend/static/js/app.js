@@ -170,12 +170,30 @@ if (dom.retryAnalyzeBtn) {
   dom.retryAnalyzeBtn.addEventListener('click', handleAnalyze);
 }
 
+let currentAnalyzeAbortController = null;
+
 async function handleAnalyze() {
   const url = dom.urlInput.value.trim();
   if (!url) {
     showAnalyzeError('Please enter a YouTube or Instagram URL.');
     return;
   }
+
+  // Cancel any existing pending request
+  if (currentAnalyzeAbortController) {
+    currentAnalyzeAbortController.abort();
+    currentAnalyzeAbortController = null;
+  }
+
+  currentAnalyzeAbortController = new AbortController();
+  const signal = currentAnalyzeAbortController.signal;
+
+  // Set frontend timeout of 22 seconds
+  const timeoutTimer = setTimeout(() => {
+    if (currentAnalyzeAbortController) {
+      currentAnalyzeAbortController.abort('TIMEOUT');
+    }
+  }, 22000);
 
   hideAll();
   dom.skeletonCard.classList.remove('hidden');
@@ -187,15 +205,21 @@ async function handleAnalyze() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ url }),
+      signal,
     });
 
-    const data = await res.json();
+    clearTimeout(timeoutTimer);
 
-    dom.skeletonCard.classList.add('hidden');
-    setAnalyzeBtnLoading(false);
+    let data;
+    try {
+      data = await res.json();
+    } catch {
+      throw new Error(`Server returned HTTP ${res.status}.`);
+    }
 
-    if (!data.success) {
-      showAnalyzeError(data.error || 'Failed to analyze URL.');
+    if (!res.ok || !data.success) {
+      const errMsg = data.error || (res.status === 504 ? 'Analysis timed out. Please try again.' : 'Failed to analyze URL.');
+      showAnalyzeError(errMsg);
       return;
     }
 
@@ -223,9 +247,17 @@ async function handleAnalyze() {
     }
 
   } catch (err) {
+    clearTimeout(timeoutTimer);
+    if (err.name === 'AbortError' || err === 'TIMEOUT' || signal.aborted) {
+      showAnalyzeError('Analysis timed out. YouTube response took too long. Please try again.');
+    } else {
+      showAnalyzeError(err.message || 'Network error. Please check your internet connection.');
+    }
+  } finally {
+    // Guarantees loading state and skeleton are ALWAYS cleared
     dom.skeletonCard.classList.add('hidden');
     setAnalyzeBtnLoading(false);
-    showAnalyzeError('Network error. Please check your internet connection.');
+    currentAnalyzeAbortController = null;
   }
 }
 

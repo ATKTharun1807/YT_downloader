@@ -207,23 +207,60 @@ async def select_folder():
 @router.post("/analyze")
 @analyze_limiter.limit
 async def analyze(request: Request, body: AnalyzeRequest):
+    logger.info("[ANALYZE] Request received")
     raw_url = (body.url or "").strip()
     if not raw_url:
+        logger.warning("[ANALYZE] Empty URL provided")
         return _safe_error("Please enter a YouTube or Instagram URL.")
 
     valid, clean_url, media_info = validate_media_url(raw_url)
     if not valid:
+        logger.warning("[ANALYZE] URL validation failed: %s", clean_url)
         return _safe_error(clean_url)
 
+    logger.info("[ANALYZE] URL validated: %s", clean_url)
     platform = media_info.get("platform", "youtube")
     has_playlist = media_info.get("is_playlist", False)
     is_mixed = media_info.get("is_mixed", False)
-
     noplaylist = not (has_playlist and not is_mixed)
 
+    import shutil
+    import yt_dlp
     try:
-        info = await asyncio.to_thread(get_video_info, clean_url, noplaylist=noplaylist)
+        import yt_dlp_ejs
+        ejs_avail = getattr(yt_dlp_ejs, "__version__", getattr(yt_dlp_ejs, "version", "installed"))
+    except Exception:
+        ejs_avail = "not installed"
+
+    deno_found = bool(shutil.which("deno"))
+    node_found = bool(shutil.which("node") or shutil.which("nodejs"))
+    js_runtime_str = "deno" if deno_found else ("node" if node_found else "none")
+
+    logger.info("[ANALYZE] Starting yt-dlp")
+    logger.info("[ANALYZE] yt-dlp version: %s", getattr(yt_dlp.version, "__version__", "unknown"))
+    logger.info("[ANALYZE] EJS available: %s", ejs_avail)
+    logger.info("[ANALYZE] JS runtime: %s", js_runtime_str)
+    logger.info("[ANALYZE] Extraction started")
+
+    try:
+        # Enforce hard backend timeout of 20 seconds
+        info = await asyncio.wait_for(
+            asyncio.to_thread(get_video_info, clean_url, noplaylist=noplaylist),
+            timeout=20.0
+        )
+        logger.info("[ANALYZE] Extraction completed")
+    except asyncio.TimeoutError:
+        logger.error("[ANALYZE] Extraction timed out after 20s for %s", clean_url)
+        return JSONResponse(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            content={
+                "success": False,
+                "error": "Media analysis timed out. The server or platform took too long to respond. Please try again.",
+                "error_code": "TIMEOUT",
+            }
+        )
     except MediaExtractionError as e:
+        logger.error("[ANALYZE] Media extraction error for %s: %s (code=%s)", clean_url, e.message, e.code)
         return JSONResponse(
             status_code=400,
             content={
@@ -234,9 +271,17 @@ async def analyze(request: Request, body: AnalyzeRequest):
             }
         )
     except Exception as e:
-        logger.error("Analyze error: %s", e, exc_info=True)
-        return _safe_error(f"Failed to fetch media information: {str(e)}")
+        logger.error("[ANALYZE] Unexpected error during extraction for %s: %s", clean_url, e, exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={
+                "success": False,
+                "error": "YouTube extraction is temporarily unavailable. Please try again.",
+                "error_code": "SERVER_ERROR",
+            }
+        )
 
+    logger.info("[ANALYZE] Returning response")
     return {
         "success": True,
         "url": clean_url,
