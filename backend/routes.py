@@ -35,6 +35,7 @@ from backend.downloader import (
     get_default_download_dir,
     MediaExtractionError,
     _fetch_youtube_oembed_fallback,
+    _get_cookie_file,
 )
 from backend.jobs import job_manager, load_history, delete_history_entry
 from backend.schemas import AnalyzeRequest, DownloadRequest, SettingsUpdateRequest
@@ -684,3 +685,50 @@ async def save_settings(body: SettingsUpdateRequest):
         return _safe_error("Failed to save settings.", status_code=500)
 
     return {"success": True, "settings": settings}
+
+
+# ---------------------------------------------------------------------------
+# /api/cookies — Cookie management for Cloud & YouTube Bot Bypass
+# ---------------------------------------------------------------------------
+
+@router.get("/cookies/status")
+async def get_cookie_status():
+    cookie_path = _get_cookie_file()
+    has_cookies = bool(cookie_path and os.path.exists(cookie_path) and os.path.getsize(cookie_path) > 0)
+    source = "env" if bool(os.environ.get("YOUTUBE_COOKIES")) else ("file" if has_cookies else None)
+    return {
+        "success": True,
+        "has_cookies": has_cookies,
+        "source": source,
+    }
+
+
+@router.post("/cookies")
+async def save_cookies(request: Request):
+    try:
+        body = await request.json()
+        cookies_content = (body.get("cookies") or "").strip()
+        if not cookies_content:
+            return _safe_error("No cookie content provided.", status_code=400)
+
+        target_file = os.path.join(_PROJECT_ROOT, "cookies.txt")
+        with open(target_file, "w", encoding="utf-8") as f:
+            f.write(cookies_content)
+
+        return {"success": True, "message": "Cookies saved successfully."}
+    except Exception as e:
+        logger.error("Failed to save cookies: %s", e)
+        return _safe_error("Failed to save cookies.", status_code=500)
+
+
+@router.delete("/cookies")
+async def clear_cookies():
+    target_file = os.path.join(_PROJECT_ROOT, "cookies.txt")
+    if os.path.exists(target_file):
+        try:
+            os.remove(target_file)
+        except Exception as e:
+            logger.error("Failed to remove cookies.txt: %s", e)
+            return _safe_error("Could not remove cookies file.", status_code=500)
+    return {"success": True, "message": "Cookies cleared."}
+

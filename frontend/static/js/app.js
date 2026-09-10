@@ -112,6 +112,11 @@ const dom = {
   clearHistoryBtn:       $('clearHistoryBtn'),
   saveSettingsBtn:       $('saveSettingsBtn'),
   settingsFeedback:      $('settingsFeedback'),
+  cookieStatusBadge:     $('cookieStatusBadge'),
+  cookieInput:           $('cookieInput'),
+  saveCookiesBtn:        $('saveCookiesBtn'),
+  clearCookiesBtn:       $('clearCookiesBtn'),
+  cookieFeedback:        $('cookieFeedback'),
 
   // Sidebar Footer
   ffmpegDot:   $('ffmpegDot'),
@@ -910,7 +915,73 @@ async function loadSettingsUI() {
     dom.settingsQuality.value = state.settings.default_quality || 'best';
     dom.settingsMaxConcurrent.value = state.settings.max_concurrent || 2;
     dom.settingsTheme.value = state.settings.theme || 'light';
+    await loadCookieStatus();
   } catch { /* ignore */ }
+}
+
+async function loadCookieStatus() {
+  if (!dom.cookieStatusBadge) return;
+  try {
+    const res = await fetch('/api/cookies/status');
+    const data = await res.json();
+    if (data.has_cookies) {
+      dom.cookieStatusBadge.textContent = data.source === 'env' ? 'Active (Environment)' : 'Active (cookies.txt)';
+      dom.cookieStatusBadge.style.background = 'rgba(16, 185, 129, 0.15)';
+      dom.cookieStatusBadge.style.color = '#10b981';
+    } else {
+      dom.cookieStatusBadge.textContent = 'Not configured (Cloud downloads restricted)';
+      dom.cookieStatusBadge.style.background = 'rgba(239, 68, 68, 0.15)';
+      dom.cookieStatusBadge.style.color = '#ef4444';
+    }
+  } catch { /* ignore */ }
+}
+
+if (dom.saveCookiesBtn) {
+  dom.saveCookiesBtn.addEventListener('click', async () => {
+    const val = (dom.cookieInput.value || '').trim();
+    if (!val) {
+      showCookieFeedback('Please paste cookie file contents first.', 'error');
+      return;
+    }
+    try {
+      const res = await fetch('/api/cookies', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cookies: val }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        dom.cookieInput.value = '';
+        showCookieFeedback('Cookies saved! YouTube cloud bot checks bypassed.', 'success');
+        await loadCookieStatus();
+      } else {
+        showCookieFeedback(data.error || 'Failed to save cookies.', 'error');
+      }
+    } catch {
+      showCookieFeedback('Failed to save cookies.', 'error');
+    }
+  });
+}
+
+if (dom.clearCookiesBtn) {
+  dom.clearCookiesBtn.addEventListener('click', async () => {
+    if (!confirm('Remove saved YouTube cookies?')) return;
+    try {
+      await fetch('/api/cookies', { method: 'DELETE' });
+      showCookieFeedback('Cookies removed.', 'success');
+      await loadCookieStatus();
+    } catch {
+      showCookieFeedback('Failed to remove cookies.', 'error');
+    }
+  });
+}
+
+function showCookieFeedback(msg, type) {
+  if (!dom.cookieFeedback) return;
+  dom.cookieFeedback.textContent = msg;
+  dom.cookieFeedback.className = `alert alert-${type}`;
+  dom.cookieFeedback.classList.remove('hidden');
+  setTimeout(() => dom.cookieFeedback.classList.add('hidden'), 4000);
 }
 
 dom.saveSettingsBtn.addEventListener('click', async () => {
@@ -1006,7 +1077,25 @@ function clearAnalyzeError() {
 }
 
 function showDownloadError(msg) {
-  dom.downloadError.textContent = msg;
+  dom.downloadError.innerHTML = '';
+  const textEl = document.createElement('div');
+  textEl.textContent = msg;
+  dom.downloadError.appendChild(textEl);
+
+  if (/cookie|bot|authentication|sign in/i.test(msg)) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-secondary';
+    btn.style.marginTop = '10px';
+    btn.style.fontSize = '12px';
+    btn.textContent = '⚙ Open Settings to Add YouTube Cookies';
+    btn.onclick = () => {
+      dom.navItems.forEach(n => {
+        if (n.dataset.page === 'settings') n.click();
+      });
+    };
+    dom.downloadError.appendChild(btn);
+  }
   dom.downloadError.classList.remove('hidden');
 }
 

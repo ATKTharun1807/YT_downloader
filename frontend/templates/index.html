@@ -412,6 +412,27 @@
           </div>
         </div>
 
+        <!-- YouTube Authentication -->
+        <div class="settings-group">
+          <div class="settings-group-title">YouTube Authentication (Cloud & Bot Bypass)</div>
+          <div style="font-size:13px; color:var(--text-muted); margin-bottom:var(--space-md); line-height:1.5;">
+            Cloud hosting environments (like Render) require YouTube cookies to bypass the <em>"Sign in to confirm you're not a bot"</em> check.
+            Export your cookies from your browser using the <strong>"Get cookies.txt LOCALLY"</strong> extension and paste them below (or set the <code>YOUTUBE_COOKIES</code> environment variable in your Render dashboard).
+          </div>
+
+          <div class="setting-row" style="align-items:flex-start;">
+            <div class="setting-info" style="flex:1;">
+              <div class="setting-label">Cookies Status: <span id="cookieStatusBadge" style="font-size:12px; font-weight:600; padding:2px 8px; border-radius:12px; background:rgba(100,116,139,0.15); color:var(--text-muted);">Checking…</span></div>
+              <textarea id="cookieInput" class="input" style="width:100%; height:90px; font-family:monospace; font-size:11px; margin-top:8px; resize:vertical;" placeholder="# Netscape HTTP Cookie File&#10;.youtube.com	TRUE	/	FALSE	1750000000	LOGIN_INFO	..."></textarea>
+              <div style="margin-top:8px; display:flex; gap:8px;">
+                <button type="button" class="btn btn-primary" id="saveCookiesBtn" style="font-size:12px; padding:6px 14px;">🔑 Save Cookies</button>
+                <button type="button" class="btn btn-secondary" id="clearCookiesBtn" style="font-size:12px; padding:6px 14px;">🗑 Remove Cookies</button>
+              </div>
+              <div id="cookieFeedback" class="alert hidden" style="margin-top:8px; font-size:12px; padding:8px 12px;"></div>
+            </div>
+          </div>
+        </div>
+
         <!-- Danger zone -->
         <div class="settings-group">
           <div class="settings-group-title">Data</div>

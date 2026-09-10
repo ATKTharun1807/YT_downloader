@@ -137,6 +137,11 @@ def categorize_extraction_error(e: Exception) -> MediaExtractionError:
             "This media is unavailable, deleted, or the link is invalid.",
             code="UNAVAILABLE"
         )
+    if "sign in to confirm you're not a bot" in msg or ("sign in" in msg and "bot" in msg) or "cookies-from-browser" in msg:
+        return MediaExtractionError(
+            "YouTube Bot Protection: This cloud server IP requires authentication. Please configure YouTube cookies in the Settings tab or set YOUTUBE_COOKIES in Render to enable downloads.",
+            code="COOKIES_REQUIRED"
+        )
     if "captcha" in msg or "challenge" in msg:
         return MediaExtractionError(
             "A security challenge/CAPTCHA is required by the platform.",
