@@ -160,11 +160,21 @@ except Exception as exc:
 
 @router.get("/select-folder")
 async def select_folder():
-    """Open native Windows folder selection dialog."""
+    """Select download directory. In cloud/Linux environments, returns server storage directory."""
     settings = _load_settings()
     initial_dir = settings.get("download_dir") or get_safe_download_root()
     if not os.path.isdir(initial_dir):
         initial_dir = get_safe_download_root()
+
+    # Cloud / Docker / Linux headless environment: immediately return valid directory without opening desktop dialog
+    if sys.platform != "win32" or bool(os.environ.get("RENDER")):
+        os.makedirs(initial_dir, exist_ok=True)
+        return {
+            "success": True,
+            "directory": initial_dir,
+            "is_cloud": True,
+            "message": "Using server storage directory.",
+        }
 
     result = await asyncio.to_thread(_run_native_folder_picker, initial_dir)
 
@@ -172,7 +182,13 @@ async def select_folder():
         return {"success": False, "cancelled": True, "message": result.get("message", "Folder selection cancelled.")}
 
     if "error" in result:
-        return _safe_error(result["error"], status_code=500)
+        logger.warning("Folder picker unavailable (%s), falling back to default directory: %s", result["error"], initial_dir)
+        return {
+            "success": True,
+            "directory": initial_dir,
+            "fallback": True,
+            "message": "Using default download directory.",
+        }
 
     chosen_path = result.get("path", "")
     if not chosen_path:
@@ -477,7 +493,10 @@ async def open_file(entry_id: str):
         return _safe_error("Access denied.", status_code=403)
 
     try:
-        os.startfile(file_path)  # Windows-only
+        if sys.platform == "win32" and hasattr(os, "startfile"):
+            os.startfile(file_path)
+        else:
+            return {"success": True, "message": "File stored on server: " + file_path}
     except Exception as e:
         logger.error("open-file error: %s", e)
         return _safe_error("Could not open file.")
