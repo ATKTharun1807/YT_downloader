@@ -563,10 +563,10 @@ async function handleDownload() {
   const originalText = dom.downloadBtnText.textContent;
   const originalIconHTML = dom.downloadBtnIcon.innerHTML;
 
-  // Step 1: Open native Windows folder picker
+  // Prepare download
   dom.downloadBtn.disabled = true;
   dom.downloadBtnIcon.innerHTML = '<span class="spinner" style="width:16px;height:16px;border-width:2px;display:inline-block;"></span>';
-  dom.downloadBtnText.textContent = 'Selecting folder…';
+  dom.downloadBtnText.textContent = 'Preparing download…';
 
   let chosenDir = null;
   try {

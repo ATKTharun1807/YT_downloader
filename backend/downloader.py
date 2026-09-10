@@ -751,6 +751,8 @@ def build_download_options(
     if postprocess_callback:
         pp_hooks.append(postprocess_callback)
 
+    is_yt = "youtube.com" in url or "youtu.be" in url
+
     options = {
         **_build_base_opts(noplaylist=noplaylist),
         "outtmpl": outtmpl,
@@ -759,8 +761,15 @@ def build_download_options(
         "postprocessor_hooks": pp_hooks,
     }
 
+    if is_yt:
+        options["extractor_args"] = {
+            "youtube": {
+                "player_client": ["android", "web", "mweb"],
+            }
+        }
+
     if audio_only:
-        options["format"] = "bestaudio[ext=m4a]/bestaudio/best"
+        options["format"] = "bestaudio/best"
         options["postprocessors"] = [
             {
                 "key": "FFmpegExtractAudio",
@@ -773,25 +782,13 @@ def build_download_options(
             try:
                 h = int(quality)
                 options["format"] = (
-                    f"bestvideo[height<={h}][ext=mp4]+bestaudio[ext=m4a]/"
-                    f"bestvideo[height<={h}]+bestaudio[ext=m4a]/"
-                    f"bestvideo[height<={h}]+bestaudio/"
-                    f"best[height<={h}][ext=mp4]/best[height<={h}]/best"
+                    f"bestvideo*[height<={h}]+bestaudio/best[height<={h}]/bestvideo*+bestaudio/best"
                 )
             except ValueError:
-                options["format"] = (
-                    "bestvideo[ext=mp4]+bestaudio[ext=m4a]/"
-                    "bestvideo+bestaudio[ext=m4a]/"
-                    "bestvideo+bestaudio/"
-                    "best[ext=mp4]/best"
-                )
+                options["format"] = "bestvideo*+bestaudio/best"
         else:
-            options["format"] = (
-                "bestvideo[ext=mp4]+bestaudio[ext=m4a]/"
-                "bestvideo+bestaudio[ext=m4a]/"
-                "bestvideo+bestaudio/"
-                "best[ext=mp4]/best"
-            )
+            options["format"] = "bestvideo*+bestaudio/best"
+
         options["merge_output_format"] = "mp4"
 
     return options
