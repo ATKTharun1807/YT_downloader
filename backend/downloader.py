@@ -284,7 +284,7 @@ def _build_base_opts(noplaylist: bool = True) -> dict:
         "buffersize": 1024 * 1024,     # 1MB buffer
         "extractor_args": {
             "youtube": {
-                "player_client": ["ios", "android", "mweb", "web"],
+                "player_client": ["android", "ios"],
                 "player_skip": ["webpage", "configs"],
             }
         },
@@ -326,8 +326,8 @@ def get_video_info(url: str, noplaylist: bool = True) -> dict:
     Raises MediaExtractionError on failure.
     """
     client_strategies = [
-        ["ios", "android", "mweb", "web"],
-        ["android", "web"],
+        ["android", "ios"],
+        ["ios", "android"],
     ]
 
     raw = None

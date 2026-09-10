@@ -243,14 +243,14 @@ async def analyze(request: Request, body: AnalyzeRequest):
     logger.info("[ANALYZE] Extraction started")
 
     try:
-        # Enforce hard backend timeout of 20 seconds
+        # Enforce backend timeout of 45 seconds to handle Render free instance cold starts
         info = await asyncio.wait_for(
             asyncio.to_thread(get_video_info, clean_url, noplaylist=noplaylist),
-            timeout=20.0
+            timeout=45.0
         )
         logger.info("[ANALYZE] Extraction completed")
     except asyncio.TimeoutError:
-        logger.error("[ANALYZE] Extraction timed out after 20s for %s", clean_url)
+        logger.error("[ANALYZE] Extraction timed out after 45s for %s", clean_url)
         return JSONResponse(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             content={

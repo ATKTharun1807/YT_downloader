@@ -188,12 +188,12 @@ async function handleAnalyze() {
   currentAnalyzeAbortController = new AbortController();
   const signal = currentAnalyzeAbortController.signal;
 
-  // Set frontend timeout of 22 seconds
+  // Set frontend timeout of 48 seconds (allowing time for cloud container warm-up)
   const timeoutTimer = setTimeout(() => {
     if (currentAnalyzeAbortController) {
       currentAnalyzeAbortController.abort('TIMEOUT');
     }
-  }, 22000);
+  }, 48000);
 
   hideAll();
   dom.skeletonCard.classList.remove('hidden');
