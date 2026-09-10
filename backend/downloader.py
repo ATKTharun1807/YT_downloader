@@ -762,14 +762,22 @@ def build_download_options(
     }
 
     if is_yt:
-        options["extractor_args"] = {
-            "youtube": {
-                "player_client": ["android", "web", "mweb"],
+        cookie_file = _get_cookie_file()
+        if cookie_file:
+            options["extractor_args"] = {
+                "youtube": {
+                    "player_client": ["android", "web"],
+                }
             }
-        }
+        else:
+            options["extractor_args"] = {
+                "youtube": {
+                    "player_client": ["android"],
+                }
+            }
 
     if audio_only:
-        options["format"] = "bestaudio/best"
+        options["format"] = "bestaudio/best/18"
         options["postprocessors"] = [
             {
                 "key": "FFmpegExtractAudio",
@@ -782,12 +790,12 @@ def build_download_options(
             try:
                 h = int(quality)
                 options["format"] = (
-                    f"bestvideo*[height<={h}]+bestaudio/best[height<={h}]/bestvideo*+bestaudio/best"
+                    f"bestvideo*[height<={h}]+bestaudio/best[height<={h}]/bestvideo*+bestaudio/best/18"
                 )
             except ValueError:
-                options["format"] = "bestvideo*+bestaudio/best"
+                options["format"] = "bestvideo*+bestaudio/best/18"
         else:
-            options["format"] = "bestvideo*+bestaudio/best"
+            options["format"] = "bestvideo*+bestaudio/best/18"
 
         options["merge_output_format"] = "mp4"
 
