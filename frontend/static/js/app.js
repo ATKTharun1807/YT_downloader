@@ -581,12 +581,15 @@ async function handleDownload() {
       return;
     }
 
+    if (pickerData.is_cloud) {
+      state.isCloud = true;
+    }
     chosenDir = pickerData.directory;
   } catch (err) {
     dom.downloadBtn.disabled = false;
     dom.downloadBtnIcon.innerHTML = originalIconHTML;
     dom.downloadBtnText.textContent = originalText;
-    showDownloadError('Could not open Windows folder selector.');
+    showDownloadError('Could not initialize download directory.');
     return;
   }
 
@@ -770,6 +773,18 @@ function showCompleteCard(result, meta) {
   if (dom.saveToDeviceBtn) {
     dom.saveToDeviceBtn.href = downloadUrl;
     dom.saveToDeviceBtn.download = result.filename || '';
+    if (state.isCloud) {
+      dom.saveToDeviceBtn.textContent = '⬇ Save / Download to Device';
+    }
+  }
+
+  if (state.isCloud) {
+    if (dom.openFileBtn) dom.openFileBtn.style.display = 'none';
+    if (dom.openFolderBtn) dom.openFolderBtn.style.display = 'none';
+    if (dom.completeDir) dom.completeDir.textContent = 'Ready to download';
+  } else {
+    if (dom.openFileBtn) dom.openFileBtn.style.display = '';
+    if (dom.openFolderBtn) dom.openFolderBtn.style.display = '';
   }
 
   // Auto trigger download to user's browser

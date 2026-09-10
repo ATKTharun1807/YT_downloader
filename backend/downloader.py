@@ -399,7 +399,8 @@ def _build_base_opts(noplaylist: bool = True) -> dict:
         "buffersize": 1024 * 1024,     # 1MB buffer
         "extractor_args": {
             "youtube": {
-                "player_client": ["web", "mweb", "android", "ios"],
+                "player_client": ["android"],
+                "player_skip": ["webpage", "configs"],
             }
         },
         "http_headers": {
@@ -773,6 +774,7 @@ def build_download_options(
             options["extractor_args"] = {
                 "youtube": {
                     "player_client": ["android"],
+                    "player_skip": ["webpage", "configs"],
                 }
             }
 
@@ -918,9 +920,28 @@ def execute_download(
         with yt_dlp.YoutubeDL(options) as ydl:
             ydl.download([url])
     except yt_dlp.utils.DownloadError as e:
-        err = categorize_extraction_error(e)
-        logger.error("Download failed: %s", err.message)
-        raise RuntimeError(err.message)
+        raw_msg = str(e).lower()
+        if "bot" in raw_msg or "format" in raw_msg or "sign in" in raw_msg or "player response" in raw_msg:
+            logger.warning("Primary YouTube download failed (%s). Retrying with direct android stream...", e)
+            fallback_opts = dict(options)
+            fallback_opts["extractor_args"] = {
+                "youtube": {
+                    "player_client": ["android"],
+                    "player_skip": ["webpage", "configs"],
+                }
+            }
+            fallback_opts["format"] = "bestaudio/best/18" if is_audio else "best/18"
+            try:
+                with yt_dlp.YoutubeDL(fallback_opts) as ydl_fb:
+                    ydl_fb.download([url])
+            except Exception as fb_err:
+                err = categorize_extraction_error(fb_err)
+                logger.error("Fallback download also failed: %s", err.message)
+                raise RuntimeError(err.message)
+        else:
+            err = categorize_extraction_error(e)
+            logger.error("Download failed: %s", err.message)
+            raise RuntimeError(err.message)
     except Exception as e:
         logger.error("Download exception: %s", e, exc_info=True)
         raise RuntimeError(f"Download failed: {e}")
