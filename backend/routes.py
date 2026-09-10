@@ -32,6 +32,7 @@ from backend.downloader import (
     get_video_info,
     get_default_download_dir,
     MediaExtractionError,
+    _fetch_youtube_oembed_fallback,
 )
 from backend.jobs import job_manager, load_history, delete_history_entry
 from backend.schemas import AnalyzeRequest, DownloadRequest, SettingsUpdateRequest
@@ -243,40 +244,43 @@ async def analyze(request: Request, body: AnalyzeRequest):
     logger.info("[ANALYZE] Extraction started")
 
     try:
-        # Enforce backend timeout of 45 seconds to handle Render free instance cold starts
+        # Enforce backend timeout of 20 seconds (well within Render reverse proxy timeout)
         info = await asyncio.wait_for(
             asyncio.to_thread(get_video_info, clean_url, noplaylist=noplaylist),
-            timeout=45.0
+            timeout=20.0
         )
         logger.info("[ANALYZE] Extraction completed")
-    except asyncio.TimeoutError:
-        logger.error("[ANALYZE] Extraction timed out after 45s for %s", clean_url)
-        return JSONResponse(
-            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            content={
-                "success": False,
-                "error": "Media analysis timed out. The server or platform took too long to respond. Please try again.",
-                "error_code": "TIMEOUT",
-            }
-        )
-    except MediaExtractionError as e:
-        logger.error("[ANALYZE] Media extraction error for %s: %s (code=%s)", clean_url, e.message, e.code)
-        return JSONResponse(
-            status_code=400,
-            content={
-                "success": False,
-                "error": e.message,
-                "error_code": e.code,
-                "platform": platform,
-            }
-        )
-    except Exception as e:
-        logger.error("[ANALYZE] Unexpected error during extraction for %s: %s", clean_url, e, exc_info=True)
+    except (asyncio.TimeoutError, MediaExtractionError, Exception) as e:
+        logger.warning("[ANALYZE] Primary extraction interrupted for %s: %s", clean_url, e)
+        # For YouTube URLs, never fail with 504 Gateway Timeout or unhandled error on cloud IPs
+        if platform == "youtube":
+            logger.info("[ANALYZE] Falling back to instant YouTube oEmbed metadata for %s", clean_url)
+            fallback = _fetch_youtube_oembed_fallback(clean_url)
+            if fallback:
+                return {
+                    "success": True,
+                    "url": clean_url,
+                    "platform": "youtube",
+                    "has_playlist": False,
+                    "is_mixed": False,
+                    **fallback,
+                }
+        if isinstance(e, MediaExtractionError):
+            logger.error("[ANALYZE] Media extraction error for %s: %s (code=%s)", clean_url, e.message, e.code)
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "success": False,
+                    "error": e.message,
+                    "error_code": e.code,
+                    "platform": platform,
+                }
+            )
         return JSONResponse(
             status_code=500,
             content={
                 "success": False,
-                "error": "YouTube extraction is temporarily unavailable. Please try again.",
+                "error": "Media extraction is temporarily unavailable. Please try again.",
                 "error_code": "SERVER_ERROR",
             }
         )

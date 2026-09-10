@@ -306,7 +306,7 @@ def _fetch_youtube_oembed_fallback(url: str) -> Optional[dict]:
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
             }
         )
-        with urllib.request.urlopen(req, timeout=8) as resp:
+        with urllib.request.urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read().decode("utf-8"))
 
         video_id = ""
@@ -318,6 +318,15 @@ def _fetch_youtube_oembed_fallback(url: str) -> Optional[dict]:
         uploader = data.get("author_name") or ""
         thumb = f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg" if video_id else data.get("thumbnail_url") or ""
 
+        quality_options = [
+            {"value": "best", "label": "Best Available", "description": "Highest quality (up to 4K MP4)"},
+            {"value": "1080", "label": "Full HD (1080p)", "description": "1080p MP4 Video"},
+            {"value": "720",  "label": "HD (720p)",       "description": "720p MP4 Video"},
+            {"value": "480",  "label": "SD (480p)",       "description": "480p MP4 Video"},
+            {"value": "360",  "label": "SD (360p)",       "description": "360p MP4 Video"},
+            {"value": "audio", "label": "Audio Only — MP3 192kbps", "description": "Extract audio as MP3"},
+        ]
+
         formats = [
             {"format_id": "best", "label": "Best Available", "description": "Highest quality (up to 4K MP4)", "ext": "mp4", "quality": "best"},
             {"format_id": "1080", "label": "Full HD (1080p)", "description": "1080p MP4 Video", "ext": "mp4", "quality": "1080"},
@@ -328,15 +337,18 @@ def _fetch_youtube_oembed_fallback(url: str) -> Optional[dict]:
         ]
 
         return {
+            "id": video_id,
             "title": title,
             "uploader": uploader,
             "channel": uploader,
             "thumbnail": thumb,
-            "duration": None,
+            "duration": 0,
             "duration_str": "",
             "view_count": None,
             "like_count": None,
+            "quality_options": quality_options,
             "formats": formats,
+            "available_heights": [1080, 720, 480, 360],
             "is_playlist": False,
             "is_mixed": False,
             "is_carousel": False,
@@ -344,6 +356,34 @@ def _fetch_youtube_oembed_fallback(url: str) -> Optional[dict]:
         }
     except Exception as e:
         logger.warning("YouTube oEmbed fallback failed for %s: %s", url, e)
+        video_id = ""
+        m = re.search(r'(?:v=|\/embed\/|youtu\.be\/|\/v\/|\/e\/|watch\?v=|&v=)([^#\&\?]{11})', url)
+        if m:
+            video_id = m.group(1)
+        if video_id:
+            return {
+                "id": video_id,
+                "title": f"YouTube Video ({video_id})",
+                "uploader": "YouTube Creator",
+                "channel": "YouTube",
+                "thumbnail": f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg",
+                "duration": 0,
+                "duration_str": "",
+                "view_count": None,
+                "like_count": None,
+                "quality_options": [
+                    {"value": "best", "label": "Best Available", "description": "Highest quality (up to 4K MP4)"},
+                    {"value": "1080", "label": "Full HD (1080p)", "description": "1080p MP4 Video"},
+                    {"value": "720",  "label": "HD (720p)",       "description": "720p MP4 Video"},
+                    {"value": "audio", "label": "Audio Only — MP3 192kbps", "description": "Extract audio as MP3"},
+                ],
+                "formats": [],
+                "available_heights": [1080, 720],
+                "is_playlist": False,
+                "is_mixed": False,
+                "is_carousel": False,
+                "raw_formats": [],
+            }
         return None
 
 
@@ -352,14 +392,14 @@ def _build_base_opts(noplaylist: bool = True) -> dict:
     opts = {
         "noplaylist": noplaylist,
         "http_chunk_size": 10485760,   # 10MB chunking
-        "retries": 15,
-        "fragment_retries": 15,
+        "retries": 10,
+        "fragment_retries": 10,
         "file_access_retries": 5,
-        "socket_timeout": 30,
+        "socket_timeout": 20,
         "buffersize": 1024 * 1024,     # 1MB buffer
         "extractor_args": {
             "youtube": {
-                "player_client": ["android", "ios"],
+                "player_client": ["web", "mweb", "android", "ios"],
             }
         },
         "http_headers": {
@@ -403,46 +443,42 @@ def get_video_info(url: str, noplaylist: bool = True) -> dict:
     Returns a structured dict suitable for JSON serialization.
     Raises MediaExtractionError on failure.
     """
-    client_strategies = [
-        ["android", "ios"],
-        ["ios", "android"],
-    ]
+    is_yt = "youtube.com" in url or "youtu.be" in url
 
-    raw = None
-    last_err = None
-
-    for attempt, clients in enumerate(client_strategies):
-        opts = {
-            **_build_base_opts(noplaylist=noplaylist),
-            "quiet": True,
-            "no_warnings": True,
-            "format": "all/best",
-            "socket_timeout": 10,
-            "retries": 1,
-            "extractor_args": {
-                "youtube": {
-                    "player_client": clients,
-                }
-            },
+    opts = {
+        **_build_base_opts(noplaylist=noplaylist),
+        "quiet": True,
+        "no_warnings": True,
+        "format": "all/best",
+        "socket_timeout": 8,
+        "retries": 1,
+    }
+    if is_yt:
+        opts["extractor_args"] = {
+            "youtube": {
+                "player_client": ["web", "mweb", "android", "ios"],
+            }
         }
 
-        try:
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                raw = ydl.extract_info(url, download=False)
-            if raw:
-                break
-        except Exception as e:
-            last_err = e
-            logger.warning("Extraction strategy %d (%s) failed for %s: %s", attempt + 1, clients, url, e)
-
-    if raw is None:
-        if "youtube.com" in url or "youtu.be" in url:
-            logger.info("yt-dlp extraction failed on cloud IP. Using YouTube oEmbed fallback for %s...", url)
+    raw = None
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            raw = ydl.extract_info(url, download=False)
+    except Exception as e:
+        logger.warning("Primary yt-dlp extraction failed for %s: %s", url, e)
+        if is_yt:
+            logger.info("Using instant YouTube oEmbed fallback for %s...", url)
             fallback = _fetch_youtube_oembed_fallback(url)
             if fallback:
                 return fallback
+        raise categorize_extraction_error(e)
 
-        raise categorize_extraction_error(last_err or Exception("Could not retrieve media details"))
+    if raw is None:
+        if is_yt:
+            fallback = _fetch_youtube_oembed_fallback(url)
+            if fallback:
+                return fallback
+        raise categorize_extraction_error(Exception("Could not retrieve media details"))
 
     return _parse_info(raw, noplaylist, url)
 
