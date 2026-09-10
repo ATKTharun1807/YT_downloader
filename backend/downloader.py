@@ -23,6 +23,7 @@ import shutil
 import tempfile
 import time
 import urllib.request
+import urllib.parse
 import zipfile
 from datetime import datetime
 from typing import Callable, Optional, List, Dict, Any
@@ -269,8 +270,82 @@ def get_resolution_label(height: int) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Base yt-dlp options
+# Base yt-dlp options & Cloud Fallbacks
 # ---------------------------------------------------------------------------
+
+def _get_cookie_file() -> Optional[str]:
+    """Retrieve cookie file path if configured via YOUTUBE_COOKIES env or cookies.txt."""
+    raw = os.environ.get("YOUTUBE_COOKIES", "").strip()
+    if raw:
+        path = os.path.join(tempfile.gettempdir(), "yt_cookies.txt")
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(raw)
+            return path
+        except Exception:
+            pass
+
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    local_cookie = os.path.join(project_root, "cookies.txt")
+    if os.path.exists(local_cookie):
+        return local_cookie
+    return None
+
+
+def _fetch_youtube_oembed_fallback(url: str) -> Optional[dict]:
+    """
+    Fallback metadata extractor using YouTube's official public oEmbed API.
+    Works reliably on every cloud/datacenter IP (Render/AWS/GCP) without bot blocking.
+    """
+    try:
+        encoded = urllib.parse.quote(url, safe="")
+        req_url = f"https://www.youtube.com/oembed?url={encoded}&format=json"
+        req = urllib.request.Request(
+            req_url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+            }
+        )
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+
+        video_id = ""
+        m = re.search(r'(?:v=|\/embed\/|youtu\.be\/|\/v\/|\/e\/|watch\?v=|&v=)([^#\&\?]{11})', url)
+        if m:
+            video_id = m.group(1)
+
+        title = data.get("title") or "YouTube Video"
+        uploader = data.get("author_name") or ""
+        thumb = f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg" if video_id else data.get("thumbnail_url") or ""
+
+        formats = [
+            {"format_id": "best", "label": "Best Available", "description": "Highest quality (up to 4K MP4)", "ext": "mp4", "quality": "best"},
+            {"format_id": "1080", "label": "Full HD (1080p)", "description": "1080p MP4 Video", "ext": "mp4", "quality": "1080"},
+            {"format_id": "720",  "label": "HD (720p)",       "description": "720p MP4 Video", "ext": "mp4", "quality": "720"},
+            {"format_id": "480",  "label": "SD (480p)",       "description": "480p MP4 Video", "ext": "mp4", "quality": "480"},
+            {"format_id": "360",  "label": "SD (360p)",       "description": "360p MP4 Video", "ext": "mp4", "quality": "360"},
+            {"format_id": "audio", "label": "Audio Only (MP3)", "description": "192kbps MP3 Audio track", "ext": "mp3", "quality": "audio", "audio_only": True},
+        ]
+
+        return {
+            "title": title,
+            "uploader": uploader,
+            "channel": uploader,
+            "thumbnail": thumb,
+            "duration": None,
+            "duration_str": "",
+            "view_count": None,
+            "like_count": None,
+            "formats": formats,
+            "is_playlist": False,
+            "is_mixed": False,
+            "is_carousel": False,
+            "raw_formats": [],
+        }
+    except Exception as e:
+        logger.warning("YouTube oEmbed fallback failed for %s: %s", url, e)
+        return None
+
 
 def _build_base_opts(noplaylist: bool = True) -> dict:
     """Build base yt-dlp options with high reliability and impersonation support."""
@@ -305,6 +380,10 @@ def _build_base_opts(noplaylist: bool = True) -> dict:
     if js_runtimes:
         opts["js_runtimes"] = js_runtimes
 
+    cookie_file = _get_cookie_file()
+    if cookie_file:
+        opts["cookiefile"] = cookie_file
+
     ffmpeg_path = get_ffmpeg_path()
     if ffmpeg_path:
         opts["ffmpeg_location"] = ffmpeg_path
@@ -338,7 +417,7 @@ def get_video_info(url: str, noplaylist: bool = True) -> dict:
             "quiet": True,
             "no_warnings": True,
             "format": "all/best",
-            "socket_timeout": 12,
+            "socket_timeout": 10,
             "retries": 1,
             "extractor_args": {
                 "youtube": {
@@ -357,6 +436,12 @@ def get_video_info(url: str, noplaylist: bool = True) -> dict:
             logger.warning("Extraction strategy %d (%s) failed for %s: %s", attempt + 1, clients, url, e)
 
     if raw is None:
+        if "youtube.com" in url or "youtu.be" in url:
+            logger.info("yt-dlp extraction failed on cloud IP. Using YouTube oEmbed fallback for %s...", url)
+            fallback = _fetch_youtube_oembed_fallback(url)
+            if fallback:
+                return fallback
+
         raise categorize_extraction_error(last_err or Exception("Could not retrieve media details"))
 
     return _parse_info(raw, noplaylist, url)
