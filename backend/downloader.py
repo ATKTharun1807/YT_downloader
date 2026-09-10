@@ -137,15 +137,10 @@ def categorize_extraction_error(e: Exception) -> MediaExtractionError:
             "This media is unavailable, deleted, or the link is invalid.",
             code="UNAVAILABLE"
         )
-    if "sign in to confirm you're not a bot" in msg or ("sign in" in msg and "bot" in msg) or "cookies-from-browser" in msg:
+    if "sign in to confirm you're not a bot" in msg or ("sign in" in msg and "bot" in msg) or "cookies-from-browser" in msg or "captcha" in msg or "challenge" in msg:
         return MediaExtractionError(
-            "YouTube Bot Protection: This cloud server IP requires authentication. Please configure YouTube cookies in the Settings tab or set YOUTUBE_COOKIES in Render to enable downloads.",
-            code="COOKIES_REQUIRED"
-        )
-    if "captcha" in msg or "challenge" in msg:
-        return MediaExtractionError(
-            "A security challenge/CAPTCHA is required by the platform.",
-            code="CAPTCHA_REQUIRED"
+            "YouTube is currently restricting direct downloads from this cloud server IP. Please try again or download locally.",
+            code="RESTRICTED"
         )
     if "ffmpeg" in msg:
         return MediaExtractionError(
@@ -278,24 +273,6 @@ def get_resolution_label(height: int) -> str:
 # Base yt-dlp options & Cloud Fallbacks
 # ---------------------------------------------------------------------------
 
-def _get_cookie_file() -> Optional[str]:
-    """Retrieve cookie file path if configured via YOUTUBE_COOKIES env or cookies.txt."""
-    raw = os.environ.get("YOUTUBE_COOKIES", "").strip()
-    if raw:
-        path = os.path.join(tempfile.gettempdir(), "yt_cookies.txt")
-        try:
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(raw)
-            return path
-        except Exception:
-            pass
-
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    local_cookie = os.path.join(project_root, "cookies.txt")
-    if os.path.exists(local_cookie):
-        return local_cookie
-    return None
-
 
 def _fetch_youtube_oembed_fallback(url: str) -> Optional[dict]:
     """
@@ -426,10 +403,6 @@ def _build_base_opts(noplaylist: bool = True) -> dict:
     if js_runtimes:
         opts["js_runtimes"] = js_runtimes
 
-    cookie_file = _get_cookie_file()
-    if cookie_file:
-        opts["cookiefile"] = cookie_file
-
     ffmpeg_path = get_ffmpeg_path()
     if ffmpeg_path:
         opts["ffmpeg_location"] = ffmpeg_path
@@ -451,9 +424,8 @@ def get_video_info(url: str, noplaylist: bool = True) -> dict:
     """
     is_yt = "youtube.com" in url or "youtu.be" in url
 
-    # On cloud / Render environments without cookies, YouTube datacenter IP blocking causes 15-20s delays.
-    # Serve instant oEmbed metadata (<300ms) to ensure zero 502/504 timeouts and instant UI response.
-    if is_yt and (bool(os.environ.get("RENDER")) or not _get_cookie_file()):
+    # On cloud / Render environments, serve instant oEmbed metadata (<300ms) to ensure zero 502/504 timeouts and instant UI response.
+    if is_yt and (bool(os.environ.get("RENDER")) or sys.platform != "win32"):
         fallback = _fetch_youtube_oembed_fallback(url)
         if fallback:
             logger.info("Instant oEmbed metadata loaded for %s in cloud environment", url)
@@ -768,20 +740,12 @@ def build_download_options(
     }
 
     if is_yt:
-        cookie_file = _get_cookie_file()
-        if cookie_file:
-            options["extractor_args"] = {
-                "youtube": {
-                    "player_client": ["android", "web"],
-                }
+        options["extractor_args"] = {
+            "youtube": {
+                "player_client": ["android", "ios"],
+                "player_skip": ["webpage", "configs"],
             }
-        else:
-            options["extractor_args"] = {
-                "youtube": {
-                    "player_client": ["android"],
-                    "player_skip": ["webpage", "configs"],
-                }
-            }
+        }
 
     if audio_only:
         options["format"] = "bestaudio/best/18"

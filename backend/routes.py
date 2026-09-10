@@ -35,7 +35,6 @@ from backend.downloader import (
     get_default_download_dir,
     MediaExtractionError,
     _fetch_youtube_oembed_fallback,
-    _get_cookie_file,
 )
 from backend.jobs import job_manager, load_history, delete_history_entry
 from backend.schemas import AnalyzeRequest, DownloadRequest, SettingsUpdateRequest
@@ -688,47 +687,55 @@ async def save_settings(body: SettingsUpdateRequest):
 
 
 # ---------------------------------------------------------------------------
-# /api/cookies — Cookie management for Cloud & YouTube Bot Bypass
+# Diagnostics
 # ---------------------------------------------------------------------------
 
-@router.get("/cookies/status")
-async def get_cookie_status():
-    cookie_path = _get_cookie_file()
-    has_cookies = bool(cookie_path and os.path.exists(cookie_path) and os.path.getsize(cookie_path) > 0)
-    source = "env" if bool(os.environ.get("YOUTUBE_COOKIES")) else ("file" if has_cookies else None)
-    return {
-        "success": True,
-        "has_cookies": has_cookies,
-        "source": source,
-    }
-
-
-@router.post("/cookies")
-async def save_cookies(request: Request):
+@router.get("/diag/logs")
+async def diag_logs():
+    log_path = os.path.join(_PROJECT_ROOT, "logs", "app.log")
+    if not os.path.exists(log_path):
+        return {"logs": "no log file found"}
     try:
-        body = await request.json()
-        cookies_content = (body.get("cookies") or "").strip()
-        if not cookies_content:
-            return _safe_error("No cookie content provided.", status_code=400)
-
-        target_file = os.path.join(_PROJECT_ROOT, "cookies.txt")
-        with open(target_file, "w", encoding="utf-8") as f:
-            f.write(cookies_content)
-
-        return {"success": True, "message": "Cookies saved successfully."}
+        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+        return {"logs": lines[-100:]}
     except Exception as e:
-        logger.error("Failed to save cookies: %s", e)
-        return _safe_error("Failed to save cookies.", status_code=500)
+        return {"error": str(e)}
 
 
-@router.delete("/cookies")
-async def clear_cookies():
-    target_file = os.path.join(_PROJECT_ROOT, "cookies.txt")
-    if os.path.exists(target_file):
+@router.get("/diag/download-test")
+async def diag_download_test(url: str = "https://www.youtube.com/watch?v=sW28DfgQdNM"):
+    import yt_dlp
+    results = {}
+
+    clients_to_test = [
+        ("android", ["android"], ["webpage", "configs"]),
+        ("ios", ["ios"], ["webpage", "configs"]),
+        ("android_ios", ["android", "ios"], ["webpage", "configs"]),
+        ("tv", ["tv"], ["webpage", "configs"]),
+        ("tv_simply", ["tv_simply"], ["webpage", "configs"]),
+        ("android_vr", ["android_vr"], ["webpage", "configs"]),
+        ("default", ["default"], []),
+    ]
+
+    for name, clients, skip in clients_to_test:
+        opts = {
+            "quiet": True,
+            "skip_download": True,
+            "extractor_args": {
+                "youtube": {
+                    "player_client": clients,
+                    "player_skip": skip,
+                }
+            }
+        }
         try:
-            os.remove(target_file)
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                fmts = len(info.get("formats", []))
+                results[name] = {"ok": True, "formats": fmts}
         except Exception as e:
-            logger.error("Failed to remove cookies.txt: %s", e)
-            return _safe_error("Could not remove cookies file.", status_code=500)
-    return {"success": True, "message": "Cookies cleared."}
+            results[name] = {"ok": False, "error": str(e)[:120]}
+
+    return {"results": results}
 
