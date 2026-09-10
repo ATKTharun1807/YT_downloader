@@ -381,8 +381,7 @@ def _build_base_opts(noplaylist: bool = True) -> dict:
         "buffersize": 1024 * 1024,     # 1MB buffer
         "extractor_args": {
             "youtube": {
-                "player_client": ["android"],
-                "player_skip": ["webpage", "configs"],
+                "player_client": ["visionos", "web", "android"],
             }
         },
         "http_headers": {
@@ -742,13 +741,12 @@ def build_download_options(
     if is_yt:
         options["extractor_args"] = {
             "youtube": {
-                "player_client": ["android", "ios"],
-                "player_skip": ["webpage", "configs"],
+                "player_client": ["visionos", "web", "android"],
             }
         }
 
     if audio_only:
-        options["format"] = "bestaudio/best/18"
+        options["format"] = "bestaudio/best"
         options["postprocessors"] = [
             {
                 "key": "FFmpegExtractAudio",
@@ -761,12 +759,12 @@ def build_download_options(
             try:
                 h = int(quality)
                 options["format"] = (
-                    f"bestvideo*[height<={h}]+bestaudio/best[height<={h}]/bestvideo*+bestaudio/best/18"
+                    f"bestvideo*[height<={h}]+bestaudio/best[height<={h}]/bestvideo*+bestaudio/best"
                 )
             except ValueError:
-                options["format"] = "bestvideo*+bestaudio/best/18"
+                options["format"] = "bestvideo*+bestaudio/best"
         else:
-            options["format"] = "bestvideo*+bestaudio/best/18"
+            options["format"] = "bestvideo*+bestaudio/best"
 
         options["merge_output_format"] = "mp4"
 
@@ -891,15 +889,14 @@ def execute_download(
     except yt_dlp.utils.DownloadError as e:
         raw_msg = str(e).lower()
         if "bot" in raw_msg or "format" in raw_msg or "sign in" in raw_msg or "player response" in raw_msg:
-            logger.warning("Primary YouTube download failed (%s). Retrying with direct android stream...", e)
+            logger.warning("Primary YouTube download failed (%s). Retrying with visionos/web fallback stream...", e)
             fallback_opts = dict(options)
             fallback_opts["extractor_args"] = {
                 "youtube": {
-                    "player_client": ["android"],
-                    "player_skip": ["webpage", "configs"],
+                    "player_client": ["visionos", "web"],
                 }
             }
-            fallback_opts["format"] = "bestaudio/best/18" if is_audio else "best/18"
+            fallback_opts["format"] = "bestaudio/best" if is_audio else "bestvideo+bestaudio/best"
             try:
                 with yt_dlp.YoutubeDL(fallback_opts) as ydl_fb:
                     ydl_fb.download([url])
