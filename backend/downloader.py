@@ -285,11 +285,10 @@ def _build_base_opts(noplaylist: bool = True) -> dict:
         "extractor_args": {
             "youtube": {
                 "player_client": ["android", "ios"],
-                "player_skip": ["webpage", "configs"],
             }
         },
         "http_headers": {
-            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
             "Accept-Language": "en-US,en;q=0.9",
         },
     }
@@ -339,12 +338,11 @@ def get_video_info(url: str, noplaylist: bool = True) -> dict:
             "quiet": True,
             "no_warnings": True,
             "format": "all/best",
-            "socket_timeout": 8,
+            "socket_timeout": 12,
             "retries": 1,
             "extractor_args": {
                 "youtube": {
                     "player_client": clients,
-                    "player_skip": ["webpage", "configs"],
                 }
             },
         }
