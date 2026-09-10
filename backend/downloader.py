@@ -445,12 +445,20 @@ def get_video_info(url: str, noplaylist: bool = True) -> dict:
     """
     is_yt = "youtube.com" in url or "youtu.be" in url
 
+    # On cloud / Render environments without cookies, YouTube datacenter IP blocking causes 15-20s delays.
+    # Serve instant oEmbed metadata (<300ms) to ensure zero 502/504 timeouts and instant UI response.
+    if is_yt and (bool(os.environ.get("RENDER")) or not _get_cookie_file()):
+        fallback = _fetch_youtube_oembed_fallback(url)
+        if fallback:
+            logger.info("Instant oEmbed metadata loaded for %s in cloud environment", url)
+            return fallback
+
     opts = {
         **_build_base_opts(noplaylist=noplaylist),
         "quiet": True,
         "no_warnings": True,
         "format": "all/best",
-        "socket_timeout": 8,
+        "socket_timeout": 6,
         "retries": 1,
     }
     if is_yt:
