@@ -172,9 +172,18 @@ if (dom.retryAnalyzeBtn) {
 
 let currentAnalyzeAbortController = null;
 
+// State machine tracker: 'IDLE' | 'ANALYZING' | 'SUCCESS' | 'ERROR' | 'TIMEOUT'
+let analyzeState = 'IDLE';
+
+function setAnalyzeState(newState) {
+  analyzeState = newState;
+  console.log(`[STATE] ${newState}`);
+}
+
 async function handleAnalyze() {
   const url = dom.urlInput.value.trim();
   if (!url) {
+    setAnalyzeState('ERROR');
     showAnalyzeError('Please enter a YouTube or Instagram URL.');
     return;
   }
@@ -188,13 +197,14 @@ async function handleAnalyze() {
   currentAnalyzeAbortController = new AbortController();
   const signal = currentAnalyzeAbortController.signal;
 
-  // Set frontend timeout of 48 seconds (allowing time for cloud container warm-up)
+  // Frontend timeout of 20 seconds
   const timeoutTimer = setTimeout(() => {
     if (currentAnalyzeAbortController) {
       currentAnalyzeAbortController.abort('TIMEOUT');
     }
-  }, 48000);
+  }, 20000);
 
+  setAnalyzeState('ANALYZING');
   hideAll();
   dom.skeletonCard.classList.remove('hidden');
   setAnalyzeBtnLoading(true);
@@ -210,19 +220,34 @@ async function handleAnalyze() {
 
     clearTimeout(timeoutTimer);
 
+    if (res.status === 502) {
+      setAnalyzeState('ERROR');
+      showAnalyzeError('Server is currently starting up (HTTP 502). Please retry in a few seconds.');
+      return;
+    }
+
+    if (res.status === 504) {
+      setAnalyzeState('TIMEOUT');
+      showAnalyzeError('Analysis timed out. The server took too long to respond. Please try again.');
+      return;
+    }
+
     let data;
     try {
       data = await res.json();
     } catch {
+      setAnalyzeState('ERROR');
       throw new Error(`Server returned HTTP ${res.status}.`);
     }
 
     if (!res.ok || !data.success) {
-      const errMsg = data.error || (res.status === 504 ? 'Analysis timed out. Please try again.' : 'Failed to analyze URL.');
+      setAnalyzeState('ERROR');
+      const errMsg = data.error || 'Failed to analyze URL.';
       showAnalyzeError(errMsg);
       return;
     }
 
+    setAnalyzeState('SUCCESS');
     state.videoInfo = data;
     state.noplaylist = true;
 
@@ -249,8 +274,10 @@ async function handleAnalyze() {
   } catch (err) {
     clearTimeout(timeoutTimer);
     if (err.name === 'AbortError' || err === 'TIMEOUT' || signal.aborted) {
-      showAnalyzeError('Analysis timed out. YouTube response took too long. Please try again.');
+      setAnalyzeState('TIMEOUT');
+      showAnalyzeError('Analysis timed out. Please try again.');
     } else {
+      setAnalyzeState('ERROR');
       showAnalyzeError(err.message || 'Network error. Please check your internet connection.');
     }
   } finally {
@@ -258,6 +285,9 @@ async function handleAnalyze() {
     dom.skeletonCard.classList.add('hidden');
     setAnalyzeBtnLoading(false);
     currentAnalyzeAbortController = null;
+    if (analyzeState === 'ANALYZING') {
+      setAnalyzeState('IDLE');
+    }
   }
 }
 

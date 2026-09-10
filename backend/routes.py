@@ -20,8 +20,10 @@ import asyncio
 import json
 import logging
 import os
+import shutil
 import subprocess
 import sys
+import traceback
 from typing import AsyncGenerator
 
 from fastapi import APIRouter, Request, status
@@ -93,8 +95,59 @@ def _safe_error(user_msg: str, log_msg: str = "", status_code: int = 400, error_
 
 
 # ---------------------------------------------------------------------------
-# /api/ffmpeg-status
+# Diagnostic & Health Check Endpoints
 # ---------------------------------------------------------------------------
+
+@router.get("/health")
+async def api_health():
+    return {"status": "ok"}
+
+
+@router.get("/system-status")
+async def api_system_status():
+    """Diagnostic system status without exposing any secrets, env vars, or keys."""
+    try:
+        import yt_dlp
+        yt_ver = getattr(yt_dlp.version, "__version__", "unknown")
+    except Exception as e:
+        yt_ver = f"error: {e}"
+
+    try:
+        import yt_dlp_ejs
+        ejs_ver = getattr(yt_dlp_ejs, "__version__", getattr(yt_dlp_ejs, "version", "installed"))
+    except Exception as e:
+        ejs_ver = f"not installed ({e})"
+
+    deno_path = shutil.which("deno")
+    deno_ver = "not found"
+    if deno_path:
+        try:
+            deno_ver = subprocess.check_output([deno_path, "--version"], text=True).splitlines()[0]
+        except Exception as e:
+            deno_ver = f"found ({e})"
+
+    ffmpeg_path = get_ffmpeg_path()
+    ffmpeg_ver = "not found"
+    if ffmpeg_path:
+        try:
+            ffmpeg_ver = subprocess.check_output([ffmpeg_path, "-version"], text=True).splitlines()[0]
+        except Exception as e:
+            ffmpeg_ver = f"found ({e})"
+
+    return {
+        "status": "ok",
+        "yt_dlp": yt_ver != "unknown" and not yt_ver.startswith("error"),
+        "yt_dlp_ejs": "not installed" not in ejs_ver,
+        "deno": bool(deno_path),
+        "ffmpeg": bool(ffmpeg_path),
+        "versions": {
+            "yt_dlp": yt_ver,
+            "yt_dlp_ejs": ejs_ver,
+            "deno": deno_ver,
+            "ffmpeg": ffmpeg_ver,
+        }
+    }
+
 
 @router.get("/ffmpeg-status")
 async def ffmpeg_status():
@@ -224,55 +277,76 @@ async def select_folder():
 @router.post("/analyze")
 @analyze_limiter.limit
 async def analyze(request: Request, body: AnalyzeRequest):
-    logger.info("[ANALYZE] Request received")
+    logger.info("[API] /api/analyze request received")
     raw_url = (body.url or "").strip()
+    logger.info("[API] URL = %s", raw_url)
     if not raw_url:
-        logger.warning("[ANALYZE] Empty URL provided")
+        logger.warning("[API ERROR] Empty URL provided")
         return _safe_error("Please enter a YouTube or Instagram URL.")
 
     valid, clean_url, media_info = validate_media_url(raw_url)
     if not valid:
-        logger.warning("[ANALYZE] URL validation failed: %s", clean_url)
+        logger.warning("[API ERROR] URL validation failed: %s", clean_url)
         return _safe_error(clean_url)
 
-    logger.info("[ANALYZE] URL validated: %s", clean_url)
+    logger.info("[API] URL validation complete")
     platform = media_info.get("platform", "youtube")
     has_playlist = media_info.get("is_playlist", False)
     is_mixed = media_info.get("is_mixed", False)
     noplaylist = not (has_playlist and not is_mixed)
 
-    import shutil
-    import yt_dlp
+    try:
+        import yt_dlp
+        yt_ver = getattr(yt_dlp.version, "__version__", "unknown")
+    except Exception as e:
+        yt_ver = f"error: {e}"
+
     try:
         import yt_dlp_ejs
         ejs_avail = getattr(yt_dlp_ejs, "__version__", getattr(yt_dlp_ejs, "version", "installed"))
     except Exception:
         ejs_avail = "not installed"
 
-    deno_found = bool(shutil.which("deno"))
-    node_found = bool(shutil.which("node") or shutil.which("nodejs"))
-    js_runtime_str = "deno" if deno_found else ("node" if node_found else "none")
+    deno_path = shutil.which("deno")
+    deno_ver = "not found"
+    if deno_path:
+        try:
+            deno_ver = subprocess.check_output([deno_path, "--version"], text=True).splitlines()[0]
+        except Exception:
+            deno_ver = "available"
 
-    logger.info("[ANALYZE] Starting yt-dlp")
-    logger.info("[ANALYZE] yt-dlp version: %s", getattr(yt_dlp.version, "__version__", "unknown"))
-    logger.info("[ANALYZE] EJS available: %s", ejs_avail)
-    logger.info("[ANALYZE] JS runtime: %s", js_runtime_str)
-    logger.info("[ANALYZE] Extraction started")
+    ffmpeg_path = get_ffmpeg_path()
+    ffmpeg_ver = "not found"
+    if ffmpeg_path:
+        try:
+            ffmpeg_ver = subprocess.check_output([ffmpeg_path, "-version"], text=True).splitlines()[0]
+        except Exception:
+            ffmpeg_ver = "available"
+
+    logger.info("[API] yt-dlp initialization")
+    logger.info("[API] yt-dlp version = %s", yt_ver)
+    logger.info("[API] EJS version = %s", ejs_avail)
+    logger.info("[API] Deno version = %s", deno_ver)
+    logger.info("[API] FFmpeg version = %s", ffmpeg_ver)
+    logger.info("[API] Starting YouTube extraction")
 
     try:
-        # Enforce backend timeout of 20 seconds (well within Render reverse proxy timeout)
+        # Enforce hard backend timeout of 15 seconds
         info = await asyncio.wait_for(
             asyncio.to_thread(get_video_info, clean_url, noplaylist=noplaylist),
-            timeout=20.0
+            timeout=15.0
         )
-        logger.info("[ANALYZE] Extraction completed")
+        logger.info("[API] YouTube extraction finished")
     except (asyncio.TimeoutError, MediaExtractionError, Exception) as e:
-        logger.warning("[ANALYZE] Primary extraction interrupted for %s: %s", clean_url, e)
-        # For YouTube URLs, never fail with 504 Gateway Timeout or unhandled error on cloud IPs
+        logger.error("[API ERROR] Extraction error for %s: %s", clean_url, e)
+        logger.error("[API ERROR] full traceback:\n%s", traceback.format_exc())
+
+        # For YouTube URLs, never let the request fail or return 500/502/504
         if platform == "youtube":
-            logger.info("[ANALYZE] Falling back to instant YouTube oEmbed metadata for %s", clean_url)
+            logger.info("[API] Invoking instant fallback metadata for %s", clean_url)
             fallback = _fetch_youtube_oembed_fallback(clean_url)
             if fallback:
+                logger.info("[API] Returning metadata")
                 return {
                     "success": True,
                     "url": clean_url,
@@ -281,8 +355,8 @@ async def analyze(request: Request, body: AnalyzeRequest):
                     "is_mixed": False,
                     **fallback,
                 }
+
         if isinstance(e, MediaExtractionError):
-            logger.error("[ANALYZE] Media extraction error for %s: %s (code=%s)", clean_url, e.message, e.code)
             return JSONResponse(
                 status_code=400,
                 content={
@@ -292,16 +366,17 @@ async def analyze(request: Request, body: AnalyzeRequest):
                     "platform": platform,
                 }
             )
+
         return JSONResponse(
             status_code=500,
             content={
                 "success": False,
-                "error": "Media extraction is temporarily unavailable. Please try again.",
-                "error_code": "SERVER_ERROR",
+                "error": "Media extraction failed. Please check the URL and try again.",
+                "error_code": "EXTRACTION_FAILED",
             }
         )
 
-    logger.info("[ANALYZE] Returning response")
+    logger.info("[API] Returning metadata")
     return {
         "success": True,
         "url": clean_url,
