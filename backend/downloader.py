@@ -20,6 +20,7 @@ import logging
 import os
 import re
 import shutil
+import sys
 import tempfile
 import time
 import urllib.request
@@ -137,10 +138,20 @@ def categorize_extraction_error(e: Exception) -> MediaExtractionError:
             "This media is unavailable, deleted, or the link is invalid.",
             code="UNAVAILABLE"
         )
-    if "sign in to confirm you're not a bot" in msg or ("sign in" in msg and "bot" in msg) or "cookies-from-browser" in msg or "captcha" in msg or "challenge" in msg:
+    if "confirm your age" in msg or "age-restricted" in msg or "sign in to confirm your age" in msg:
+        return MediaExtractionError(
+            "This YouTube video is age-restricted and requires YouTube sign-in authentication or cookies.",
+            code="AGE_RESTRICTED"
+        )
+    if "sign in to confirm you're not a bot" in msg or ("sign in" in msg and "bot" in msg) or "captcha" in msg or "challenge" in msg:
         return MediaExtractionError(
             "YouTube is currently restricting direct downloads from this cloud server IP. Please try again or download locally.",
             code="RESTRICTED"
+        )
+    if "cookies-from-browser" in msg:
+        return MediaExtractionError(
+            "This content requires YouTube authentication or cookies to download.",
+            code="AUTH_REQUIRED"
         )
     if "ffmpeg" in msg:
         return MediaExtractionError(
@@ -893,7 +904,7 @@ def execute_download(
             fallback_opts = dict(options)
             fallback_opts["extractor_args"] = {
                 "youtube": {
-                    "player_client": ["visionos", "web"],
+                    "player_client": ["tvembed", "mweb", "android", "ios", "web"],
                 }
             }
             fallback_opts["format"] = "bestaudio/best" if is_audio else "bestvideo+bestaudio/best"
